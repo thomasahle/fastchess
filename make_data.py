@@ -7,8 +7,10 @@ import sys
 import argparse
 import time
 from datetime import timedelta
+import fastchess
 
-STOCKFISH_PATH = "Stockfish/src/stockfish"
+#STOCKFISH_PATH = "Stockfish/src/stockfish"
+STOCKFISH_PATH = "/data2/fc/Stockfish/src/stockfish"
 
 parser = argparse.ArgumentParser(
         description='Make fasttext input for learning chess.')
@@ -20,15 +22,12 @@ parser.add_argument('-threads', type=int, default=8,
                     help='Threads to use.')
 parser.add_argument('-games', type=int, default=8,
                     help='Number of games to play')
-parser.add_argument('-splitmove', action='store_const', const=True,
-                    default=False, help='Whether to have to/from separate.')
 parser.add_argument('-convolutions', type=str, default='1x1,2x2',
                     help='Types of convolutions to use, default=1x1,2x2')
 args = parser.parse_args()
 
 OUR_COLOR = chess.WHITE if args.color == 'white' else chess.BLACK
-SPLIT_MOVE = args.splitmove
-CONVOLUTIONS = [list(map(int,c.split('x'))) for c in args.convolutions.split(',')]
+#CONVOLUTIONS = [list(map(int,c.split('x'))) for c in args.convolutions.split(',')]
 MOVE_TIME = args.movetime
 THREADS = args.threads
 N_GAMES = args.games
@@ -43,46 +42,6 @@ def discretize_score(score):
         return int(score*steps)
     else:
         return 'm{}'.format(score.mate)
-
-def make_convolutions(square, width, height):
-    # Convolutions are made a bit more complicated due to even sizes
-    file_ = chess.square_file(square)
-    rank_ = chess.square_rank(square)
-    f_ranges, r_ranges = [], []
-    for ranges, start, size in ((f_ranges, file_, width),
-                                (r_ranges, rank_, height)):
-        if size % 2 == 1:
-            ranges.append(range(start-size//2, start+size//2+1))
-        else:
-            ranges.append(range(start-size//2, start+size//2))
-            ranges.append(range(start-size//2+1, start+size//2+1))
-    for f_range in f_ranges:
-        for r_range in r_ranges:
-            convolution = []
-            for f in f_range:
-                for r in r_range:
-                    if f < 0 or f > 7 or r < 0 or r > 7:
-                        convolution.append(None)
-                    else: convolution.append(chess.square(f,r))
-            yield convolution
-
-convolutions = {square: [c for w, h in CONVOLUTIONS
-                           for c in make_convolutions(square, w, h)]
-                for square in chess.SQUARES}
-
-def board_to_words(board):
-    piece_map = board.piece_map()
-    for square in piece_map.keys():
-        for convolution in convolutions[square]:
-            word = [str(square)]
-            for s in convolution:
-                if s is None:
-                    word.append('x')
-                elif s in piece_map:
-                    word.append(piece_map[s].symbol())
-                else:
-                    word.append('-')
-            yield ''.join(word)
 
 def play_game(engine, info_handler):
     board = chess.Board()
@@ -102,15 +61,13 @@ def play_game(engine, info_handler):
         # Make fasttext line
         if board.turn == OUR_COLOR:
             labels = []
-            labels.append(str(discretize_score(score[1])))
+            labels.append('__label__' + str(discretize_score(score[1])))
+            # We add split moves as well as actual move
             uci_move = move.uci()[:4]
-            if SPLIT_MOVE:
-                labels.append('f_' + uci_move[:2])
-                labels.append('t_' + uci_move[2:])
-            else:
-                labels.append(uci_move)
-            labels = ['__label__' + label for label in labels]
-            yield ' '.join(itertools.chain(board_to_words(board), labels))
+            labels.append('__label__' + 'f_' + uci_move[:2])
+            labels.append('__label__' + 't_' + uci_move[2:])
+            labels.append('__label__' + uci_move)
+            yield ' '.join(itertools.chain(fastchess.board_to_words(board), labels))
 
         # In the beginning of the game, add some randomness
         if 1/board.fullmove_number > random.random():
@@ -136,6 +93,8 @@ def run_thread(thread_id, print_lock):
         for line in play_game(engine, info_handler):
             with print_lock:
                 print(line)
+    if thread_id == 0:
+        print('Finishing remaining threads...')
 
 def main():
     lock = multiprocessing.Lock()

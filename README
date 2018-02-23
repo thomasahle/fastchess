@@ -4,6 +4,5 @@ git clone git@github.com:mcostalba/Stockfish.git
 pip install python-chess
 
 Run:
-python3 make_data.py -games 100 > out.data
-gshuf out.data > out.shuf
-fastText/fasttext supervised -input out.shuf -output g100t0 -t 0
+python3 make_data.py -games 100 > gshuf > g100
+/opt/fastText/fasttext supervised -input g100 -output g100t0 -t 0
