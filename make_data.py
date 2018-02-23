@@ -8,7 +8,7 @@ import argparse
 import time
 from datetime import timedelta
 
-STOCKFISH_PATH = "/Users/thdy/Repos/fastchess/Stockfish/src/stockfish"
+STOCKFISH_PATH = "Stockfish/src/stockfish"
 
 parser = argparse.ArgumentParser(
         description='Make fasttext input for learning chess.')
