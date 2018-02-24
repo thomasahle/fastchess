@@ -62,12 +62,13 @@ def play_game(engine, info_handler):
         if board.turn == OUR_COLOR:
             labels = []
             labels.append('__label__' + str(discretize_score(score[1])))
-            # We add split moves as well as actual move
-            uci_move = move.uci()[:4]
+            uci_move = move.uci()
+            labels.append('__label__' + uci_move)
+            # We add split moves as well as actual move.
+            # The t_ split move could contain a promotion.
             labels.append('__label__' + 'f_' + uci_move[:2])
             labels.append('__label__' + 't_' + uci_move[2:])
-            labels.append('__label__' + uci_move)
-            yield ' '.join(itertools.chain(fastchess.board_to_words(board), labels))
+            yield ' '.join(itertools.chain(fastchess.board_to_words2(board), labels))
 
         # In the beginning of the game, add some randomness
         if 1/board.fullmove_number > random.random():
@@ -94,7 +95,7 @@ def run_thread(thread_id, print_lock):
             with print_lock:
                 print(line)
     if thread_id == 0:
-        print('Finishing remaining threads...')
+        print('Finishing remaining threads...', file=sys.stderr)
 
 def main():
     lock = multiprocessing.Lock()
@@ -108,3 +109,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

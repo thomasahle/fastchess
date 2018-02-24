@@ -2,7 +2,7 @@ import chess
 
 # Maybe just try all sliding convolutions.
 # Then I wouldnt get duplicates, and 3x2's would capture knight captures
-CONVOLUTIONS = [(1,1),(2,2)]
+CONVOLUTIONS = [(1,1),(2,2),(3,2),(2,3)]
 
 def make_convolutions(square, width, height):
     # Convolutions are made a bit more complicated due to even sizes
@@ -43,4 +43,24 @@ def board_to_words(board):
                 else:
                     word.append('-')
             yield ''.join(word)
+
+def board_to_words2(board):
+    piece_map = board.piece_map()
+    for w, h in CONVOLUTIONS:
+        for f1 in range(-1, 10-w):
+            for r1 in range(-1, 10-h):
+                word = ['_'.join(map(str,[w,h,f1,r1]))]
+                for f in range(f1, f1+w):
+                    for r in range(r1, r1+h):
+                        if f < 0 or f > 7 or r < 0 or r > 7:
+                            word.append('x')
+                        else:
+                            s = chess.square(f,r)
+                            piece = piece_map.get(s, None)
+                            if piece is None:
+                                word.append('-')
+                            else:
+                                word.append(piece.symbol())
+                yield ''.join(word)
+
 

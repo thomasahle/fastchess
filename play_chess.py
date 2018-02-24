@@ -6,7 +6,7 @@ import sys
 import random
 
 def find_move(model, board, max_labels=100):
-    pos = ' '.join(fastchess.board_to_words(board))
+    pos = ' '.join(fastchess.board_to_words2(board))
     for k in range(10, max_labels, 5):
         labels, probs = model.predict(pos, k)
         print(labels, probs)
