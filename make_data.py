@@ -8,6 +8,7 @@ import argparse
 import time
 from datetime import timedelta
 import fastchess
+import fastText
 
 #STOCKFISH_PATH = "Stockfish/src/stockfish"
 STOCKFISH_PATH = "/data2/fc/Stockfish/src/stockfish"
@@ -22,28 +23,15 @@ parser.add_argument('-threads', type=int, default=8,
                     help='Threads to use.')
 parser.add_argument('-games', type=int, default=8,
                     help='Number of games to play')
-parser.add_argument('-convolutions', type=str, default='1x1,2x2',
-                    help='Types of convolutions to use, default=1x1,2x2')
+parser.add_argument('-selfplay', type=str, default=None,
+                    help='Fastchess model to play with')
 args = parser.parse_args()
 
-OUR_COLOR = chess.WHITE if args.color == 'white' else chess.BLACK
-#CONVOLUTIONS = [list(map(int,c.split('x'))) for c in args.convolutions.split(',')]
 MOVE_TIME = args.movetime
 THREADS = args.threads
 N_GAMES = args.games
 
-def discretize_score(score):
-    if score.cp is not None:
-        cp = score.cp
-        steps = 10
-        if cp > 750: return steps
-        if cp < -750: return -steps
-        score = 2/(1 + 10**(-cp/400)) - 1
-        return int(score*steps)
-    else:
-        return 'm{}'.format(score.mate)
-
-def play_game(engine, info_handler):
+def play_game(engine, info_handler, selfplay_model=None):
     board = chess.Board()
     engine.ucinewgame()
     while not board.is_game_over():
@@ -52,30 +40,43 @@ def play_game(engine, info_handler):
 
         # If we starve the engine on time, it may not find a move
         tries = 1
-        score = {}
-        while 1 not in score:
-            move = engine.go(movetime=MOVE_TIME*tries).bestmove
+        score, sf_move = {}, None
+        while 1 not in score or sf_move is None:
+            sf_move = engine.go(movetime=MOVE_TIME*tries).bestmove
             score = info_handler.info["score"]
             tries += 1
+            if tries > 10:
+                print('Warning: stockfish not returning moves in position', score, sf_move, file=sys.stderr)
+                print(board, file=sys.stderr)
 
-        # Make fasttext line
-        if board.turn == OUR_COLOR:
-            labels = []
-            labels.append('__label__' + str(discretize_score(score[1])))
-            uci_move = move.uci()
-            labels.append('__label__' + uci_move)
-            # We add split moves as well as actual move.
-            # The t_ split move could contain a promotion.
-            labels.append('__label__' + 'f_' + uci_move[:2])
-            labels.append('__label__' + 't_' + uci_move[2:])
-            yield ' '.join(itertools.chain(fastchess.board_to_words2(board), labels))
+        # Always predict from Make fasttext line
+        if board.turn == chess.WHITE:
+            string = ' '.join(fastchess.board_to_words(board))
+            uci_move = sf_move.uci()
+        else:
+            string = ' '.join(fastchess.board_to_words(board.mirror()))
+            uci_move = fastchess.mirror_move(sf_move).uci()
 
-        # In the beginning of the game, add some randomness
-        if 1/board.fullmove_number > random.random():
-            move = random.choice(list(board.legal_moves))
+        labels = []
+        labels.append('__label__' + str(fastchess.discretize_score(score[1])))
+        labels.append('__label__' + uci_move)
+        labels.append('__label__f_' + uci_move[:2])
+        labels.append('__label__t_' + uci_move[2:])
+        yield string + ' ' + ' '.join(labels)
+
+        # Find a move to make
+        if selfplay_model and board.fullmove_number < 30:
+            move, _ = fastchess.find_move(selfplay_model, board,
+                                          max_labels=10, pick_random=True)
+        else:
+            move = sf_move
+            # In the beginning of the game, add some randomness
+            if 1/board.fullmove_number > random.random():
+                move = random.choice(list(board.legal_moves))
         board.push(move)
 
 def run_thread(thread_id, print_lock):
+    selfplay_model = args.selfplay and fastText.load_model(args.selfplay)
     engine = chess.uci.popen_engine(STOCKFISH_PATH)
     info_handler = chess.uci.InfoHandler()
     engine.info_handlers.append(info_handler)
@@ -83,6 +84,7 @@ def run_thread(thread_id, print_lock):
     engine.isready()
     start, last = time.time(), 0
     for i in range(N_GAMES//THREADS):
+        # Predicting progress and ETA
         if thread_id == 0 and time.time()-last > .5:
             pg = i*THREADS/N_GAMES
             if i == 0: pg += 1/1000000
@@ -91,9 +93,12 @@ def run_thread(thread_id, print_lock):
                   .format(pg*100, str(timedelta(seconds=int(etr)))),
                   file=sys.stderr)
             last = time.time()
-        for line in play_game(engine, info_handler):
+
+        # Play a game
+        for line in play_game(engine, info_handler, selfplay_model):
             with print_lock:
                 print(line)
+
     if thread_id == 0:
         print('Finishing remaining threads...', file=sys.stderr)
 

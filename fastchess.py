@@ -1,50 +1,35 @@
-import chess
+import chess, chess.uci
+import math
+import sys
+import random
 
-# Maybe just try all sliding convolutions.
-# Then I wouldnt get duplicates, and 3x2's would capture knight captures
 CONVOLUTIONS = [(1,1),(2,2),(3,2),(2,3)]
+SCORE_STEPS = 10
+MAX_SCORE = 750
 
-def make_convolutions(square, width, height):
-    # Convolutions are made a bit more complicated due to even sizes
-    file_ = chess.square_file(square)
-    rank_ = chess.square_rank(square)
-    f_ranges, r_ranges = [], []
-    for ranges, start, size in ((f_ranges, file_, width),
-                                (r_ranges, rank_, height)):
-        if size % 2 == 1:
-            ranges.append(range(start-size//2, start+size//2+1))
-        else:
-            ranges.append(range(start-size//2, start+size//2))
-            ranges.append(range(start-size//2+1, start+size//2+1))
-    for f_range in f_ranges:
-        for r_range in r_ranges:
-            convolution = []
-            for f in f_range:
-                for r in r_range:
-                    if f < 0 or f > 7 or r < 0 or r > 7:
-                        convolution.append(None)
-                    else: convolution.append(chess.square(f,r))
-            yield convolution
+def discretize_score(score):
+    if score.cp is not None:
+        cp = score.cp
+        if cp > MAX_SCORE: return SCORE_STEPS
+        if cp < -MAX_SCORE: return -SCORE_STEPS
+        score = 2/(1 + 10**(-cp/400)) - 1
+        return int(score*SCORE_STEPS)
+    else:
+        return 'm{}'.format(score.mate)
 
-convolutions = {square: [c for w, h in CONVOLUTIONS
-                           for c in make_convolutions(square, w, h)]
-                for square in chess.SQUARES}
+def undiscretize_score(score):
+    if score[0] == 'm':
+        steps = int(score[1:])
+        if steps < 0: return -MAX_SCORE + steps
+        if steps > 0: return MAX_SCORE + steps
+    else:
+        x = int(score)
+        if x == SCORE_STEPS: return MAX_SCORE
+        if x == -SCORE_STEPS: return -MAX_SCORE
+        x /= SCORE_STEPS
+        return 400*math.log((1 + x)/(1 - x))/math.log(10)
 
 def board_to_words(board):
-    piece_map = board.piece_map()
-    for square in piece_map.keys():
-        for convolution in convolutions[square]:
-            word = []
-            for s in convolution:
-                if s is None:
-                    word.append('x')
-                elif s in piece_map:
-                    word.append(str(s)+piece_map[s].symbol())
-                else:
-                    word.append('-')
-            yield ''.join(word)
-
-def board_to_words2(board):
     piece_map = board.piece_map()
     for w, h in CONVOLUTIONS:
         for f1 in range(-1, 10-w):
@@ -63,4 +48,57 @@ def board_to_words2(board):
                                 word.append(piece.symbol())
                 yield ''.join(word)
 
+def mirror_move(move):
+    return chess.Move(chess.square_mirror(move.from_square),
+                      chess.square_mirror(move.to_square),
+                      move.promotion)
+
+def find_move(model, board, max_labels=100, pick_random=False, debug=False):
+    if board.turn == chess.BLACK:
+        move, score = find_move(model, board.mirror(), max_labels,
+                                pick_random, debug)
+        return mirror_move(move), -score
+
+    pos = ' '.join(board_to_words(board if board.turn == chess.WHITE
+                                        else board.mirror()))
+    for k in range(10, max_labels, 5):
+        labels, probs = model.predict(pos, k)
+        labels = [l[len('__label__'):] for l in labels]
+        if debug:
+            print(', '.join('{}: {:.5}'.format(l,p) for l,p in zip(labels, probs)), file=sys.stderr)
+        scores, tos, frs, mvs = [], [], [], []
+        for l, p in zip(labels, probs):
+            if l.isdigit() or l[0] in 'm-':
+                scores.append((p, undiscretize_score(l)))
+            elif l[:2] == 't_':
+                tos.append((p, l[2:]))
+            elif l[:2] == 'f_':
+                frs.append((p, l[2:]))
+            else:
+                mvs.append((p, l))
+
+        # Make the score a weighted average of predicted scores
+        score = int(sum(p*v for p,v in scores)/scores[0][0]) if scores else 0
+
+        # Add combinations of to/from's to the list of possible moves
+        for p1, f in frs:
+            for p2, t in tos:
+                mvs.append((p1*p2, f+t))
+
+        if pick_random:
+            # Return any legal predicted move
+            uci_moves = (chess.Move.from_uci(m) for _, m in mvs)
+            legal_moves = [m for m in uci_moves if m in board.legal_moves]
+            return random.choice(legal_moves), score
+        else:
+            # Return best legal move
+            mvs.sort(reverse=True)
+            for p, m in mvs:
+                move = chess.Move.from_uci(m)
+                if move in board.legal_moves:
+                    return move, score
+    if debug:
+        print('Warninng: Unable to find a legal move in first {} labels.'
+              .format(max_labels), file=sys.stderr)
+    return random.choice(list(board.legal_moves)), 0
 

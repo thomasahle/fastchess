@@ -6,3 +6,4 @@ pip install python-chess
 Run:
 python3 make_data.py -games 100 > gshuf > g100
 /opt/fastText/fasttext supervised -input g100 -output g100t0 -t 0
+/opt/fastText/fasttext supervised -input g105_3.s -output g105d100 -t 0 -epoch 4 -dim 100 -neg 0
