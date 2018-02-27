@@ -35,8 +35,13 @@ def get_user_color():
 def print_unicode_board(board):
     print()
     uni_pieces = {'R':'♜', 'N':'♞', 'B':'♝', 'Q':'♛', 'K':'♚', 'P':'♟',
-                  'r':'♖', 'n':'♘', 'b':'♗', 'q':'♕', 'k':'♔', 'p':'♙', '.':'·'}
-    board_str = ''.join(uni_pieces.get(p,p) for p in str(board)).split('\n')
+                  'r':'♖', 'n':'♘', 'b':'♗', 'q':'♕', 'k':'♔', 'p':'♙'}
+    board_str = []
+    for i, p in str(board):
+        if p == '.' and i % 2 == 0: board_str.append('•')
+        if p == '.' and i % 2 == 1: board_str.append('·')
+        if p != '.': board_str.append(uni_pieces.get(p,p))
+    board_str = ''.join(board_str).split('\n')
     lines = ['{} {}'.format(8-i, line) for i, line in enumerate(board_str)]
     print('\n'.join(lines if board.turn == chess.WHITE else lines[::-1]))
     print('  a b c d e f g h\n')
