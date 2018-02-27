@@ -6,18 +6,20 @@ import sys
 import random
 
 def get_user_move(board):
-    lines = ['{} {}'.format(8-i, line)
-        for i, line in enumerate(str(board).split('\n'))]
-    print('\n'.join(lines if board.turn == chess.WHITE else lines[::-1]))
-    print('  a b c d e f g h')
+    print_unicode_board(board)
 
     # Get well-formated move
-    uci = ''
-    while not re.match('[a-h][1-8]'*2+'[qrkb]?', uci):
-        uci = input('Your move (e.g. g1f3): ')
+    move = None
+    while move is None:
+        uci = input('Your move (e.g. g1f3 or Nf3): ')
+        try:
+            move = board.parse_san(uci)
+        except ValueError:
+            pass
+        if re.match('[a-h][1-8]'*2+'[qrkb]?', uci):
+            move = chess.Move.from_uci(uci)
 
     # Check legality
-    move = chess.Move.from_uci(uci)
     if move not in board.legal_moves:
         print('Illegal move.')
         return get_user_move(board)
@@ -30,6 +32,15 @@ def get_user_color():
         color = input('Do you want to be white or black? ')
     return chess.WHITE if color == 'white' else chess.BLACK
 
+def print_unicode_board(board):
+    print()
+    uni_pieces = {'R':'♜', 'N':'♞', 'B':'♝', 'Q':'♛', 'K':'♚', 'P':'♟',
+                  'r':'♖', 'n':'♘', 'b':'♗', 'q':'♕', 'k':'♔', 'p':'♙', '.':'·'}
+    board_str = ''.join(uni_pieces.get(p,p) for p in str(board)).split('\n')
+    lines = ['{} {}'.format(8-i, line) for i, line in enumerate(board_str)]
+    print('\n'.join(lines if board.turn == chess.WHITE else lines[::-1]))
+    print('  a b c d e f g h\n')
+
 def play(model):
     user_color = get_user_color()
     board = chess.Board()
@@ -38,7 +49,7 @@ def play(model):
             move = get_user_move(board)
         else:
             move, score = fastchess.find_move(model, board, debug=True)
-            print('My move: uci={} score={}'.format(move.uci(), score))
+            print('My move: {} score={}cp'.format(board.san(move), score))
         board.push(move)
 
     # Print status

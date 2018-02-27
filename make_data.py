@@ -34,7 +34,7 @@ N_GAMES = args.games
 def play_game(engine, info_handler, selfplay_model=None):
     board = chess.Board()
     engine.ucinewgame()
-    while not board.is_game_over():
+    while not board.is_game_over() and board.fullmove_number < 60:
         engine.position(board)
         engine.isready()
 

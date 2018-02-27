@@ -31,10 +31,13 @@ def undiscretize_score(score):
 
 def board_to_words(board):
     piece_map = board.piece_map()
+    word = []
     for w, h in CONVOLUTIONS:
         for f1 in range(-1, 10-w):
             for r1 in range(-1, 10-h):
-                word = ['_'.join(map(str,[w,h,f1,r1]))]
+                del word[:]
+                word.append('_'.join(map(str,[w,h,f1,r1])))
+                any_pieces = False
                 for f in range(f1, f1+w):
                     for r in range(r1, r1+h):
                         if f < 0 or f > 7 or r < 0 or r > 7:
@@ -45,8 +48,10 @@ def board_to_words(board):
                             if piece is None:
                                 word.append('-')
                             else:
+                                any_pieces = True
                                 word.append(piece.symbol())
-                yield ''.join(word)
+                if any_pieces:
+                    yield ''.join(word)
 
 def mirror_move(move):
     return chess.Move(chess.square_mirror(move.from_square),
