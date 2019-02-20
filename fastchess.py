@@ -2,6 +2,7 @@ import chess, chess.uci
 import math
 import sys
 import random
+import fastText
 
 CONVOLUTIONS = [(1,1),(2,2),(3,2),(2,3)]
 SCORE_STEPS = 10
@@ -58,52 +59,81 @@ def mirror_move(move):
                       chess.square_mirror(move.to_square),
                       move.promotion)
 
-def find_move(model, board, max_labels=100, pick_random=False, debug=False):
-    if board.turn == chess.BLACK:
-        move, score = find_move(model, board.mirror(), max_labels,
-                                pick_random, debug)
-        return mirror_move(move), -score
+def prepare_example(board, sf_move, score):
+    # Always predict from Make fasttext line
+    if board.turn == chess.WHITE:
+        string = ' '.join(board_to_words(board))
+        uci_move = sf_move.uci()
+    else:
+        string = ' '.join(board_to_words(board.mirror()))
+        uci_move = mirror_move(sf_move).uci()
 
-    pos = ' '.join(board_to_words(board if board.turn == chess.WHITE
-                                        else board.mirror()))
-    for k in range(10, max_labels, 5):
-        labels, probs = model.predict(pos, k)
-        labels = [l[len('__label__'):] for l in labels]
-        if debug:
-            print(', '.join('{}: {:.5}'.format(l,p) for l,p in zip(labels, probs)), file=sys.stderr)
-        scores, tos, frs, mvs = [], [], [], []
-        for l, p in zip(labels, probs):
-            if l.isdigit() or l[0] in 'm-':
-                scores.append((p, undiscretize_score(l)))
-            elif l[:2] == 't_':
-                tos.append((p, l[2:]))
-            elif l[:2] == 'f_':
-                frs.append((p, l[2:]))
+    labels = []
+    labels.append('__label__' + str(discretize_score(score)))
+    labels.append('__label__' + uci_move)
+    labels.append('__label__f_' + uci_move[:2])
+    labels.append('__label__t_' + uci_move[2:])
+    return string + ' ' + ' '.join(labels)
+
+class ExampleHandler:
+    def __init__(self):
+        pass
+    def add(self, example):
+        print(example)
+    def done(self):
+        pass
+
+
+class Model:
+    def __init__(self, path):
+        self.model = fastText.load_model(path)
+
+    def find_move(self, board, max_labels=100, pick_random=False, debug=False):
+        if board.turn == chess.BLACK:
+            move, score = sefl.find_move(board.mirror(), max_labels,
+                                    pick_random, debug)
+            return mirror_move(move), -score
+
+        pos = ' '.join(board_to_words(board if board.turn == chess.WHITE
+                                            else board.mirror()))
+        for k in range(10, max_labels, 5):
+            labels, probs = self.model.predict(pos, k)
+            labels = [l[len('__label__'):] for l in labels]
+            if debug:
+                print(', '.join('{}: {:.5}'.format(l,p) for l,p in zip(labels, probs)), file=sys.stderr)
+            scores, tos, frs, mvs = [], [], [], []
+            for l, p in zip(labels, probs):
+                if l.isdigit() or l[0] in 'm-':
+                    scores.append((p, undiscretize_score(l)))
+                elif l[:2] == 't_':
+                    tos.append((p, l[2:]))
+                elif l[:2] == 'f_':
+                    frs.append((p, l[2:]))
+                else:
+                    mvs.append((p, l))
+
+            # Make the score a weighted average of predicted scores
+            score = int(sum(p*v for p,v in scores)/scores[0][0]) if scores else 0
+
+            # Add combinations of to/from's to the list of possible moves
+            for p1, f in frs:
+                for p2, t in tos:
+                    mvs.append((p1*p2, f+t))
+
+            if pick_random:
+                # Return any legal predicted move
+                uci_moves = (chess.Move.from_uci(m) for _, m in mvs)
+                legal_moves = [m for m in uci_moves if m in board.legal_moves]
+                return random.choice(legal_moves), score
             else:
-                mvs.append((p, l))
-
-        # Make the score a weighted average of predicted scores
-        score = int(sum(p*v for p,v in scores)/scores[0][0]) if scores else 0
-
-        # Add combinations of to/from's to the list of possible moves
-        for p1, f in frs:
-            for p2, t in tos:
-                mvs.append((p1*p2, f+t))
-
-        if pick_random:
-            # Return any legal predicted move
-            uci_moves = (chess.Move.from_uci(m) for _, m in mvs)
-            legal_moves = [m for m in uci_moves if m in board.legal_moves]
-            return random.choice(legal_moves), score
-        else:
-            # Return best legal move
-            mvs.sort(reverse=True)
-            for p, m in mvs:
-                move = chess.Move.from_uci(m)
-                if move in board.legal_moves:
-                    return move, score
-    if debug:
-        print('Warninng: Unable to find a legal move in first {} labels.'
-              .format(max_labels), file=sys.stderr)
-    return random.choice(list(board.legal_moves)), 0
+                # Return best legal move
+                mvs.sort(reverse=True)
+                for p, m in mvs:
+                    move = chess.Move.from_uci(m)
+                    if move in board.legal_moves:
+                        return move, score
+        if debug:
+            print('Warninng: Unable to find a legal move in first {} labels.'
+                  .format(max_labels), file=sys.stderr)
+        return random.choice(list(board.legal_moves)), 0
 

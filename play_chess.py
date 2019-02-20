@@ -1,6 +1,4 @@
-import fastText
 import chess
-import fastchess
 import re
 import sys
 import random
@@ -37,9 +35,9 @@ def print_unicode_board(board):
     uni_pieces = {'R':'♜', 'N':'♞', 'B':'♝', 'Q':'♛', 'K':'♚', 'P':'♟',
                   'r':'♖', 'n':'♘', 'b':'♗', 'q':'♕', 'k':'♔', 'p':'♙'}
     board_str = []
-    for i, p in str(board):
-        if p == '.' and i % 2 == 0: board_str.append('•')
-        if p == '.' and i % 2 == 1: board_str.append('·')
+    for i, p in enumerate(str(board)):
+        if p == '.' and (i//2 + i//16) % 2 == 0: board_str.append('•')
+        if p == '.' and (i//2 + i//16) % 2 == 1: board_str.append('·')
         if p != '.': board_str.append(uni_pieces.get(p,p))
     board_str = ''.join(board_str).split('\n')
     lines = ['{} {}'.format(8-i, line) for i, line in enumerate(board_str)]
@@ -50,10 +48,13 @@ def play(model):
     user_color = get_user_color()
     board = chess.Board()
     while not board.is_game_over():
+        #import tensorsketch
+        #print(board, board.mirror())
+        #print(tensorsketch.board_to_vec(board))
         if user_color == board.turn:
             move = get_user_move(board)
         else:
-            move, score = fastchess.find_move(model, board, debug=True)
+            move, score = model.find_move(board, debug=True)
             print('My move: {} score={}cp'.format(board.san(move), score))
         board.push(move)
 
@@ -64,7 +65,9 @@ def play(model):
 def main():
     print('Loading model...')
     path = sys.argv[1]
-    model = fastText.load_model(path)
+    #model = fastchess.Model(path)
+    import tensorsketch
+    model = tensorsketch.Model(path)
     play(model)
 
 if __name__ == '__main__':

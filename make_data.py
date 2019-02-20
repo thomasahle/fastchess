@@ -7,11 +7,10 @@ import sys
 import argparse
 import time
 from datetime import timedelta
-import fastchess
-import fastText
 
 #STOCKFISH_PATH = "Stockfish/src/stockfish"
-STOCKFISH_PATH = "/data2/fc/Stockfish/src/stockfish"
+#STOCKFISH_PATH = "/data2/fc/Stockfish/src/stockfish"
+STOCKFISH_PATH = '/usr/local/Cellar/stockfish/10/bin/stockfish'
 
 parser = argparse.ArgumentParser(
         description='Make fasttext input for learning chess.')
@@ -23,7 +22,9 @@ parser.add_argument('-threads', type=int, default=8,
                     help='Threads to use.')
 parser.add_argument('-games', type=int, default=8,
                     help='Number of games to play')
-parser.add_argument('-selfplay', type=str, default=None,
+parser.add_argument('-alg', type=str, default='tensor',
+                    help='fasttext or tensor')
+parser.add_argument('-model', type=str, default=None,
                     help='Fastchess model to play with')
 args = parser.parse_args()
 
@@ -31,7 +32,7 @@ MOVE_TIME = args.movetime
 THREADS = args.threads
 N_GAMES = args.games
 
-def play_game(engine, info_handler, selfplay_model=None):
+def play_game(engine, info_handler, model, selfplay_model=None):
     board = chess.Board()
     engine.ucinewgame()
     while not board.is_game_over() and board.fullmove_number < 60:
@@ -49,34 +50,23 @@ def play_game(engine, info_handler, selfplay_model=None):
                 print('Warning: stockfish not returning moves in position', score, sf_move, file=sys.stderr)
                 print(board, file=sys.stderr)
 
-        # Always predict from Make fasttext line
-        if board.turn == chess.WHITE:
-            string = ' '.join(fastchess.board_to_words(board))
-            uci_move = sf_move.uci()
-        else:
-            string = ' '.join(fastchess.board_to_words(board.mirror()))
-            uci_move = fastchess.mirror_move(sf_move).uci()
-
-        labels = []
-        labels.append('__label__' + str(fastchess.discretize_score(score[1])))
-        labels.append('__label__' + uci_move)
-        labels.append('__label__f_' + uci_move[:2])
-        labels.append('__label__t_' + uci_move[2:])
-        yield string + ' ' + ' '.join(labels)
+        # Don't take too many examples from each game
+        if random.random() < .1:
+            yield model.prepare_example(board, sf_move, score[1])
 
         # Find a move to make
         if selfplay_model and board.fullmove_number < 30:
-            move, _ = fastchess.find_move(selfplay_model, board,
-                                          max_labels=10, pick_random=True)
+            move, _ = selfplay_model.find_move(board, max_labels=10, pick_random=True)
         else:
             move = sf_move
             # In the beginning of the game, add some randomness
-            if 1/board.fullmove_number > random.random():
+            if random.random()*board.fullmove_number < 1:
                 move = random.choice(list(board.legal_moves))
         board.push(move)
 
-def run_thread(thread_id, print_lock):
-    selfplay_model = args.selfplay and fastText.load_model(args.selfplay)
+def run_thread(thread_id, module, example_queue):
+    selfplay_model = args.model and module.Model(args.model)
+
     engine = chess.uci.popen_engine(STOCKFISH_PATH)
     info_handler = chess.uci.InfoHandler()
     engine.info_handlers.append(info_handler)
@@ -91,26 +81,49 @@ def run_thread(thread_id, print_lock):
             etr = (time.time() - start)*(1/pg-1)
             print('Progress: {:.1f}%. Remaining: {}'
                   .format(pg*100, str(timedelta(seconds=int(etr)))),
-                  file=sys.stderr)
+                  file=sys.stderr, end='\r')
             last = time.time()
 
         # Play a game
-        for line in play_game(engine, info_handler, selfplay_model):
-            with print_lock:
-                print(line)
+        for line in play_game(engine, info_handler, module, selfplay_model):
+            example_queue.put(line)
+    example_queue.put(None)
 
     if thread_id == 0:
+        print()
         print('Finishing remaining threads...', file=sys.stderr)
 
 def main():
-    lock = multiprocessing.Lock()
+    if args.alg == 'fasttext':
+        import fastchess
+        module = fastchess
+    elif args.alg == 'tensor':
+        import tensorsketch
+        module = tensorsketch
+
+    example_handler = module.ExampleHandler()
+    queue = multiprocessing.Queue()
+
     ps = []
     for i in range(THREADS):
-        p = multiprocessing.Process(target=run_thread, args=(i, lock))
+        p = multiprocessing.Process(target=run_thread, args=(i, module, queue))
         p.start()
         ps.append(p)
+
+    remaining = len(ps)
+    while remaining != 0:
+        val = queue.get()
+        if val is None:
+            remaining -= 1
+        else:
+            example_handler.add(val)
+
     for p in ps:
         p.join()
+
+    example_handler.done()
+
+
 
 if __name__ == '__main__':
     main()
