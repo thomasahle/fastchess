@@ -8,8 +8,6 @@ import argparse
 import time
 from datetime import timedelta
 
-#STOCKFISH_PATH = "Stockfish/src/stockfish"
-#STOCKFISH_PATH = "/data2/fc/Stockfish/src/stockfish"
 STOCKFISH_PATH = '/usr/local/Cellar/stockfish/10/bin/stockfish'
 
 parser = argparse.ArgumentParser(
@@ -26,6 +24,8 @@ parser.add_argument('-alg', type=str, default='tensor',
                     help='fasttext or tensor')
 parser.add_argument('-model', type=str, default=None,
                     help='Fastchess model to play with')
+parser.add_argument('-to', type=str,
+                    help='Where to store the model')
 args = parser.parse_args()
 
 MOVE_TIME = args.movetime
@@ -101,7 +101,7 @@ def main():
         import tensorsketch
         module = tensorsketch
 
-    example_handler = module.ExampleHandler()
+    example_handler = module.ExampleHandler(args.to)
     queue = multiprocessing.Queue()
 
     ps = []

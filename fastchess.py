@@ -2,33 +2,10 @@ import chess, chess.uci
 import math
 import sys
 import random
-import fastText
+import fasttext
 
-CONVOLUTIONS = [(1,1),(2,2),(3,2),(2,3)]
-SCORE_STEPS = 10
-MAX_SCORE = 750
-
-def discretize_score(score):
-    if score.cp is not None:
-        cp = score.cp
-        if cp > MAX_SCORE: return SCORE_STEPS
-        if cp < -MAX_SCORE: return -SCORE_STEPS
-        score = 2/(1 + 10**(-cp/400)) - 1
-        return int(score*SCORE_STEPS)
-    else:
-        return 'm{}'.format(score.mate)
-
-def undiscretize_score(score):
-    if score[0] == 'm':
-        steps = int(score[1:])
-        if steps < 0: return -MAX_SCORE + steps
-        if steps > 0: return MAX_SCORE + steps
-    else:
-        x = int(score)
-        if x == SCORE_STEPS: return MAX_SCORE
-        if x == -SCORE_STEPS: return -MAX_SCORE
-        x /= SCORE_STEPS
-        return 400*math.log((1 + x)/(1 - x))/math.log(10)
+#CONVOLUTIONS = [(1,1),(2,2),(3,2),(2,3)]
+CONVOLUTIONS = [(1,1)]
 
 def board_to_words(board):
     piece_map = board.piece_map()
@@ -54,26 +31,22 @@ def board_to_words(board):
                 if any_pieces:
                     yield ''.join(word)
 
+
 def mirror_move(move):
     return chess.Move(chess.square_mirror(move.from_square),
                       chess.square_mirror(move.to_square),
                       move.promotion)
 
-def prepare_example(board, sf_move, score):
-    # Always predict from Make fasttext line
+
+def prepare_example(board, move):
     if board.turn == chess.WHITE:
         string = ' '.join(board_to_words(board))
-        uci_move = sf_move.uci()
+        uci_move = move.uci()
     else:
         string = ' '.join(board_to_words(board.mirror()))
-        uci_move = mirror_move(sf_move).uci()
+        uci_move = mirror_move(move).uci()
+    return f'{string} __label__{uci_move}'
 
-    labels = []
-    labels.append('__label__' + str(discretize_score(score)))
-    labels.append('__label__' + uci_move)
-    labels.append('__label__f_' + uci_move[:2])
-    labels.append('__label__t_' + uci_move[2:])
-    return string + ' ' + ' '.join(labels)
 
 class ExampleHandler:
     def __init__(self):
@@ -86,54 +59,52 @@ class ExampleHandler:
 
 class Model:
     def __init__(self, path):
-        self.model = fastText.load_model(path)
+        self.model = fasttext.load_model(path)
 
-    def find_move(self, board, max_labels=100, pick_random=False, debug=False):
+    def find_move(self, board, max_labels=20, pick_random=False, debug=True, flipped=False):
         if board.turn == chess.BLACK:
-            move, score = sefl.find_move(board.mirror(), max_labels,
-                                    pick_random, debug)
-            return mirror_move(move), -score
+            return mirror_move(self.find_move(
+                    board.mirror(), max_labels, pick_random, debug, flipped=True))
 
-        pos = ' '.join(board_to_words(board if board.turn == chess.WHITE
-                                            else board.mirror()))
+        #pos = ' '.join(board_to_words(board if board.turn == chess.WHITE else board.mirror()))
+        pos = ' '.join(board_to_words(board))
         for k in range(10, max_labels, 5):
             labels, probs = self.model.predict(pos, k)
             labels = [l[len('__label__'):] for l in labels]
+
             if debug:
-                print(', '.join('{}: {:.5}'.format(l,p) for l,p in zip(labels, probs)), file=sys.stderr)
-            scores, tos, frs, mvs = [], [], [], []
-            for l, p in zip(labels, probs):
-                if l.isdigit() or l[0] in 'm-':
-                    scores.append((p, undiscretize_score(l)))
-                elif l[:2] == 't_':
-                    tos.append((p, l[2:]))
-                elif l[:2] == 'f_':
-                    frs.append((p, l[2:]))
-                else:
-                    mvs.append((p, l))
+                ucis = [chess.Move.from_uci(l) for l in labels]
+                db = board
+                if flipped:
+                    ucis = [mirror_move(uci) for uci in ucis]
+                    db = board.mirror()
+                top_list = []
+                for uci, p in zip(ucis, probs):
+                    if db.is_legal(uci):
+                        san = db.san(uci)
+                        tag = f'{p:.1%}'
+                    else:
+                        san = uci.uci()
+                        tag = f'illegal, {p:.1%}'
+                    top_list.append(f'{san} ({tag})')
+                print('Top moves:', ', '.join(top_list))
 
-            # Make the score a weighted average of predicted scores
-            score = int(sum(p*v for p,v in scores)/scores[0][0]) if scores else 0
-
-            # Add combinations of to/from's to the list of possible moves
-            for p1, f in frs:
-                for p2, t in tos:
-                    mvs.append((p1*p2, f+t))
+            ps_mvs = [(p,m) for m, p in zip(map(chess.Move.from_uci, labels), probs) if board.is_legal(m)]
+            if not ps_mvs:
+                continue
 
             if pick_random:
-                # Return any legal predicted move
-                uci_moves = (chess.Move.from_uci(m) for _, m in mvs)
-                legal_moves = [m for m in uci_moves if m in board.legal_moves]
-                return random.choice(legal_moves), score
+                # Return move by probability distribution
+                ps, mvs = zip(*ps_mvs)
+                return random.choices(mvs, weights = ps)[0]
             else:
                 # Return best legal move
-                mvs.sort(reverse=True)
-                for p, m in mvs:
-                    move = chess.Move.from_uci(m)
-                    if move in board.legal_moves:
-                        return move, score
+                p, mv = max(ps_mvs)
+                return mv
+
         if debug:
             print('Warninng: Unable to find a legal move in first {} labels.'
-                  .format(max_labels), file=sys.stderr)
-        return random.choice(list(board.legal_moves)), 0
+                  .format(max_labels))
+
+        return random.choice(list(board.legal_moves))
 

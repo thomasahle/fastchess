@@ -43,48 +43,65 @@ def prepare_example(board, move, score):
     return vec_board, vec_move, pscore(score)
 
 
-def fjl(d, m=100):
-    sig = np.random.randint(-1, 1, len(outer))
-    def func(vec):
-        return np.fft.irfft(np.random.choice(np.fft.rfft(sig * outer), m//2+1))
-    return func
+class FJL:
+    def __init__(self, d, m=1000):
+        self.sig = np.random.randint(-1, 1, d)
+        self.sam = np.random.randint(0, d//2+1, m//2+1)
+    def __matmul__(self, v):
+        # FJL is a matrix, dammit
+        return np.fft.irfft(np.fft.rfft(self.sig * v)[self.sam])
 
 
 def tensor_sketch(vec, sketches):
     res = vec
     for sketch in sketches:
         outer = np.einsum('i,j->ij', vec, res).flatten()
-        res = sketch(outer)
+        res = sketch @ outer
+        #print(outer.shape, vec.shape, res.shape)
+        #print(np.linalg.norm(vec), np.linalg.norm(res), np.linalg.norm(outer))
     return res
 
 
-def train(path):
-    pass
-
 
 class ExampleHandler:
-    def __init__(self):
+    def __init__(self, to_path):
+        self.to_path = to_path
         self.boards = []
         self.moves = []
         self.scores = []
+        self.sketches = [FJL((6*2*64)**2, 10000)
+            #, FJL(6*2*64*1000, 1000)
+            ]
+
+        self.move_model = sklearn.linear_model.SGDClassifier(loss='log', n_jobs=8
+                )
+                #, max_iter=100, tol=.01)
 
     def add(self, example):
-        vec_board, vec_move, score = example
-        self.boards.append(vec_board)
-        self.moves.append(vec_move)
+        vec_board, move, score = example
+        self.boards.append(tensor_sketch(vec_board, self.sketches))
+        self.moves.append(move)
         self.scores.append(score)
 
+        #if len(self.boards) % 1000 = 999:
+            #print('Partially fitting model')
+
     def done(self):
+        print('Caching data to games.cached')
+        joblib.dump((self.boards, self.moves, self.scores), 'games.cached')
+
         n = len(self.boards)
         print(f'Got {n} examples')
         p = int(n*.8)
 
         print('Training move model')
-        model = sklearn.linear_model.SGDClassifier(loss='log', n_jobs=8, max_iter=10, tol=.1)
+        #move_clf = self.move_model.partial_fit(self.boards[:p], self.moves[:p], classes=range(64**2))
+        move_clf = self.move_model.fit(self.boards[:p], self.moves[:p]
+                #, classes=range(64**2)
+                )
+        test = move_clf.score(self.boards[p:], self.moves[p:])
         #clf = sklearn.linear_model.LogisticRegression(
                 #solver='saga', multi_class='auto', verbose=1)
-        move_clf = model.partial_fit(self.boards[:p], self.moves[:p], classes=range(64**2))
-        test = move_clf.score(self.boards[p:], self.moves[p:])
         print(f'Test score: {test}')
 
         print('Training score model.')
@@ -93,17 +110,27 @@ class ExampleHandler:
         test = score_clf.score(self.boards[p:], self.scores[p:])
         print(f'Test score: {test}')
 
-        joblib.dump((move_clf, score_clf), 'tensor.model')
-        print('Saved model as tensor.model')
+        joblib.dump(Model(move_clf, score_clf, self.sketches), self.to_path)
+        print(f'Saved model as {self.to_path}')
 
+def train_saved():
+    eh = ExampleHandler('out.model')
+    eh.boards, eh.moves, eh.scores = joblib.load('games.cached')
+    eh.done()
+
+if __name__ == '__main__':
+    train_saved()
 
 class Model:
-    def __init__(self, path):
-        self.move_clf, self.score_clf = joblib.load('tensor.model')
+    def __init__(self, move_clf, score_clf, sketches):
+        self.move_clf = move_clf
+        self.score_clf = score_clf
+        self.sketches = sketches
 
     def find_move(self, board, debug=False):
         # Should we flip the board to make sure it always gets it from white?
         vec_board = board_to_vec(board if board.turn == chess.WHITE else board.mirror())
+        vec_board = tensor_sketch(vec_board, self.sketches)
         probs = self.move_clf.predict_proba([vec_board])[0]
         score = self.score_clf.predict([vec_board])[0]
         for n, (mp, from_to) in enumerate(sorted((-p,ft) for ft,p in enumerate(probs))):
