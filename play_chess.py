@@ -32,9 +32,8 @@ def get_user_color():
         color = input('Do you want to be white or black? ')
     return chess.WHITE if color == 'white' else chess.BLACK
 
-def print_unicode_board(board, flipped=False):
-    """ Prints the position from the perspective of the current player,
-        unless flipped is True. """
+def print_unicode_board(board, perspective=chess.WHITE):
+    """ Prints the position from a given perspective. """
     print()
     uni_pieces = {'R':'♜', 'N':'♞', 'B':'♝', 'Q':'♛', 'K':'♚', 'P':'♟',
                   'r':'♖', 'n':'♘', 'b':'♗', 'q':'♕', 'k':'♔', 'p':'♙'}
@@ -44,9 +43,14 @@ def print_unicode_board(board, flipped=False):
         if p == '.' and (i//2 + i//16) % 2 == 1: board_str.append('·')
         if p != '.': board_str.append(uni_pieces.get(p,p))
     board_str = ''.join(board_str).split('\n')
-    lines = ['{} {}'.format(8-i, line) for i, line in enumerate(board_str)]
-    print('\n'.join(lines if (board.turn == chess.WHITE) ^ flipped else lines[::-1]))
-    print('  a b c d e f g h\n')
+    if perspective == chess.WHITE:
+        print('\n'.join(f'{8-i} {line}'
+                for i, line in enumerate(board_str)))
+        print('  a b c d e f g h\n')
+    else:
+        print('\n'.join(f'{1+i} {line[::-1]}'
+                for i, line in enumerate(board_str[::-1])))
+        print('  h g f e d c b a\n')
 
 
 def self_play(model, rand=False, debug=False):
@@ -55,7 +59,7 @@ def self_play(model, rand=False, debug=False):
     #board = chess.Board('8/P7/5kp1/4p2p/2p5/4P2P/6PK/2q5 w KQkq - 0 1')
 
     while not board.is_game_over():
-        print_unicode_board(board, flipped = not board.turn)
+        print_unicode_board(board, perspective = chess.WHITE)
         move = model.find_move(board, debug=debug, pick_random=rand)
         print(f' My move: {board.san(move)}')
         board.push(move)
@@ -70,7 +74,7 @@ def play(model, rand=False, debug=False):
 
     try:
         while not board.is_game_over():
-            print_unicode_board(board, flipped = user_color ^ board.turn)
+            print_unicode_board(board, perspective = user_color)
             #import tensorsketch
             #print(board, board.mirror())
             #print(tensorsketch.board_to_vec(board))
@@ -83,7 +87,7 @@ def play(model, rand=False, debug=False):
             board.push(move)
 
         # Print status
-        print_unicode_board(board)
+        print_unicode_board(board, perspective = user_color)
         print('Result:', board.result())
 
     except KeyboardInterrupt:
