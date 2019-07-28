@@ -59,9 +59,6 @@ def print_unicode_board(board, perspective=chess.WHITE):
 
 def self_play(model, rand=False, debug=False):
     board = chess.Board()
-    #board = chess.Board('rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1')
-    # Just a test that promotion does work.
-    #board = chess.Board('8/P7/5kp1/4p2p/2p5/4P2P/6PK/2q5 w KQkq - 0 1')
 
     while not board.is_game_over():
         print_unicode_board(board)
@@ -71,7 +68,8 @@ def self_play(model, rand=False, debug=False):
 
     # Print status
     print_unicode_board(board)
-    print('Result:', board.result(), 'Status:', board.status())
+    print('Result:', board.result())
+
 
 def play(model, rand=False, debug=False, sleep=0):
     user_color = get_user_color()
@@ -85,7 +83,7 @@ def play(model, rand=False, debug=False, sleep=0):
             else:
                 time.sleep(sleep)
                 move = model.find_move(board, debug=debug, pick_random=rand)
-                print(f'My move: {board.san(move)}')
+                print(f' My move: {board.san(move)}')
             board.push(move)
 
         # Print status
@@ -95,14 +93,77 @@ def play(model, rand=False, debug=False, sleep=0):
     except KeyboardInterrupt:
         print('\nGoodbye!')
 
+
 class MCTS_Model:
-    def __init__(self, fasttext_model):
+    def __init__(self, fasttext_model, rolls, pvs=0):
         self.model = mcts.Model(fasttext_model)
+        self.rolls = rolls
+        self.pvs = pvs
+        self.node = None
+
+    def print_pvs(self):
+        """ print `pvs` pvs starting from root """
+        root = self.node
+        for i in range(self.pvs):
+            pv = []
+            node = root
+            while node.children:
+                if node == root:
+                    node = sorted(node.children, key=lambda n:-n.N)[i]
+                    san = node.parent_board.san(node.move)
+                    san += f' {node.N/root.N:.1%} ({float(-node.Q):.2})'
+                else:
+                    node = max(node.children, key=lambda n:n.N)
+                    san = node.parent_board.san(node.move)
+                pv.append(san)
+            if len(pv) >= 10:
+                pv = pv[:10] + ['...']
+            print(f'Pv{i+1}:', ', '.join(pv))
+        print("\u001b[1000D", end='') # Move left
+        print(f"\u001b[{self.pvs}A", end='') # Move up
 
     def find_move(self, board, debug=False, pick_random=False):
-        # TODO: Reuse previous nodes
-        root = mcts.Node(board, None, 0, self.model)
-        return root.search(rolls = 8000, rand = pick_random)
+        # We try to reuse the previous node, but if we can't, we create a new one.
+        if self.node:
+            # Check if the board is at one of our children (like pondering)
+            for node in self.node.children:
+                if node.board == board:
+                    self.node = node
+                    break
+
+        # If we weren't able to find the board, make a new node
+        if not self.node or self.node.board != board:
+            self.node = mcts.Node(board, None, 0, self.model)
+            if debug:
+                print('Creating new node.')
+
+        # Enable debugging for node
+        self.node.root = True
+
+        # Print priors for new root node
+        if self.pvs:
+            self.node.rollout() # Ensure children are expanded
+            nodes = sorted(self.node.children, key=lambda n:n.P, reverse=True)[:7]
+            print('Priors:', ', '.join(f'{board.san(n.move)} {n.P:.1%}' for n in nodes))
+
+        # Find move to play
+        for i in range(self.rolls):
+            self.node.rollout()
+            if self.pvs and (i % 100 == 0 or i == self.rolls-1):
+                self.print_pvs()
+        # Clean up
+        if self.pvs:
+            print('\n'*self.pvs, end='')
+
+        # Pick best or random child
+        if pick_random:
+            counts = [node.N for node in self.children]
+            self.node = random.choices(self.node.children, weights=counts)[0]
+        else:
+            self.node = max(self.node.children, key = lambda n: n.N)
+
+        return self.node.move
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -110,18 +171,20 @@ def main():
     parser.add_argument('-selfplay', action='store_true', help='Play against itself')
     parser.add_argument('-rand', action='store_true', help='Play random moves from predicted distribution')
     parser.add_argument('-debug', action='store_true', help='Print all predicted labels')
-    parser.add_argument('-mcts', action='store_true', help='Play stronger (hopefully)')
+    parser.add_argument('-mcts', nargs='?', help='Play stronger (hopefully)', metavar='ROLLS', const=800, default=1, type=int)
+    parser.add_argument('-pvs', nargs='?', help='Show Principal Variations (when mcts)', const=3, default=0, type=int)
     args = parser.parse_args()
+    print(args)
 
     print('Loading model...')
-    model = fastchess.Model(args.model_path)
-    if args.mcts:
-        model = MCTS_Model(model)
+    model = MCTS_Model(fastchess.Model(args.model_path), rolls=args.mcts, pvs=args.pvs)
     if args.selfplay:
         self_play(model, rand=args.rand, debug=args.debug)
     else:
+        # If playing the model directly, we add a bit of sleep so the user can
+        # see what's going on.
         play(model, rand=args.rand, debug=args.debug,
-                sleep = .3 if not args.mcts else 0)
+                sleep = .3 if args.mcts < 100 else 0)
 
 if __name__ == '__main__':
     main()

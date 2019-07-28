@@ -4,7 +4,8 @@ import sys
 import random
 import fasttext
 
-#CONVOLUTIONS = [(1,1),(2,2),(3,2),(2,3)]
+# Convolutions are not used anymore.
+# Just keeping the code here until a new model is trained.
 CONVOLUTIONS = [(1,1)]
 
 def board_to_words(board):
@@ -46,15 +47,6 @@ def prepare_example(board, move):
         string = ' '.join(board_to_words(board.mirror()))
         uci_move = mirror_move(move).uci()
     return f'{string} __label__{uci_move}'
-
-
-class ExampleHandler:
-    def __init__(self):
-        pass
-    def add(self, example):
-        print(example)
-    def done(self):
-        pass
 
 
 class Model:
