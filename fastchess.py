@@ -62,34 +62,9 @@ class Model:
         self.model = fasttext.load_model(path)
 
     def find_move(self, board, max_labels=20, pick_random=False, debug=True, flipped=False):
-        if board.turn == chess.BLACK:
-            return mirror_move(self.find_move(
-                    board.mirror(), max_labels, pick_random, debug, flipped=True))
-
-        #pos = ' '.join(board_to_words(board if board.turn == chess.WHITE else board.mirror()))
-        pos = ' '.join(board_to_words(board))
+        # Keep predicting more labels until a legal one comes up
         for k in range(10, max_labels, 5):
-            labels, probs = self.model.predict(pos, k)
-            labels = [l[len('__label__'):] for l in labels]
-
-            if debug:
-                ucis = [chess.Move.from_uci(l) for l in labels]
-                db = board
-                if flipped:
-                    ucis = [mirror_move(uci) for uci in ucis]
-                    db = board.mirror()
-                top_list = []
-                for uci, p in zip(ucis, probs):
-                    if db.is_legal(uci):
-                        san = db.san(uci)
-                        tag = f'{p:.1%}'
-                    else:
-                        san = uci.uci()
-                        tag = f'illegal, {p:.1%}'
-                    top_list.append(f'{san} ({tag})')
-                print('Top moves:', ', '.join(top_list))
-
-            ps_mvs = [(p,m) for m, p in zip(map(chess.Move.from_uci, labels), probs) if board.is_legal(m)]
+            ps_mvs = self.find_moves(board, max_labels, debug, flipped)
             if not ps_mvs:
                 continue
 
@@ -103,8 +78,40 @@ class Model:
                 return mv
 
         if debug:
-            print('Warninng: Unable to find a legal move in first {} labels.'
+            print('Warning: Unable to find a legal move in first {} labels.'
                   .format(max_labels))
 
         return random.choice(list(board.legal_moves))
+
+    def find_moves(self, board, n_labels=20, debug=True, flipped=False):
+        """ Returns a list of up to `n_labels` (move, prob) tuples, restricted
+            to legal moves.  Probabilities may not sum to 1. """
+
+        if board.turn == chess.BLACK:
+            white_moves = self.find_moves(board.mirror(), n_labels, debug, flipped=True)
+            return [(p,mirror_move(m)) for p,m in white_moves]
+
+        pos = ' '.join(board_to_words(board))
+        labels, probs = self.model.predict(pos, n_labels)
+        labels = [l[len('__label__'):] for l in labels]
+
+        if debug:
+            ucis = [chess.Move.from_uci(l) for l in labels]
+            db = board
+            if flipped:
+                ucis = [mirror_move(uci) for uci in ucis]
+                db = board.mirror()
+            top_list = []
+            for uci, p in zip(ucis, probs):
+                if db.is_legal(uci):
+                    san = db.san(uci)
+                    tag = f'{p:.1%}'
+                else:
+                    san = uci.uci()
+                    tag = f'illegal, {p:.1%}'
+                top_list.append(f'{san} ({tag})')
+            print('Top moves:', ', '.join(top_list))
+
+        return [(p,m) for m, p in zip(map(chess.Move.from_uci, labels), probs)
+                    if board.is_legal(m)]
 
