@@ -50,11 +50,11 @@ def print_unicode_board(board, perspective=chess.WHITE):
     lines = ''.join(colored).split('\n')
     sc, ec = '\x1b[0;30;107m', '\x1b[0m'
     if perspective == chess.WHITE:
-        print('\n'.join(f' {sc} {8-i} {line} {ec}' for i, line in enumerate(lines)))
-        print(f' {sc}   a b c d e f g h {ec}\n')
+        print('\n'.join(f' {sc} {8-i} {line} {sc} {ec}' for i, line in enumerate(lines)))
+        print(f' {sc}   a b c d e f g h  {ec}\n')
     else:
-        print('\n'.join(f' {sc} {1+i} {line} {ec}' for i, line in enumerate(lines)))
-        print(f' {sc}   h g f e d c b a {ec}\n')
+        print('\n'.join(f' {sc} {1+i} {line} {sc} {ec}' for i, line in enumerate(lines)))
+        print(f' {sc}   h g f e d c b a  {ec}\n')
 
 
 def self_play(model, rand=False, debug=False):
@@ -174,10 +174,12 @@ def main():
     parser.add_argument('-mcts', nargs='?', help='Play stronger (hopefully)', metavar='ROLLS', const=800, default=1, type=int)
     parser.add_argument('-pvs', nargs='?', help='Show Principal Variations (when mcts)', const=3, default=0, type=int)
     args = parser.parse_args()
-    print(args)
 
-    print('Loading model...')
-    model = MCTS_Model(fastchess.Model(args.model_path), rolls=args.mcts, pvs=args.pvs)
+    if args.debug:
+        print('Loading model...')
+    fastchess_model = fastchess.Model(args.model_path)
+    model = MCTS_Model(fastchess_model, rolls=args.mcts, pvs=args.pvs)
+
     if args.selfplay:
         self_play(model, rand=args.rand, debug=args.debug)
     else:
