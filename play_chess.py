@@ -104,7 +104,7 @@ class MCTS_Model:
     def print_pvs(self):
         """ print `pvs` pvs starting from root """
         root = self.node
-        for i in range(self.pvs):
+        for i in range(min(self.pvs, len(node.children))):
             pv = []
             node = root
             while node.children:
