@@ -41,21 +41,18 @@ class Model:
 
     def predict(self, board, n=40, debug=False):
         """ Returns list of `n` (prob, move) legal pairs """
-        predicted = self.fc.find_moves(board, n, debug=debug, flipped=False)
-        cap_t = .1 # capture threshold
-        trimmed = []
-        for p, m in predicted:
-            if not board.is_capture(m) or p > cap_t:
-                trimmed.append((p, m))
-        mvs = [m for p, m in trimmed]
-        # Always add captures. A bit of a hack I know.
-        trimmed += [(cap_t, m) for m in board.legal_moves if board.is_capture(m) and m not in mvs]
-        if len(trimmed) < n/4:
-            #print('Warning: Predictor returned mostly illegal moves.')
-            # Add all other moves, if we don't really have any good ones
-            trimmed = [(p, m) for p,m in trimmed if p >= 0.05]
-            trimmed += [(.05, m) for m in board.legal_moves if not any(m1==m for _,m1 in trimmed)]
-        return trimmed
+        pre = {m:p for p,m in self.fc.find_moves(board, n, debug=debug, flipped=False)}
+        res = []
+        for m in board.generate_legal_moves():
+            cap = board.is_capture(m)
+            board.push(m)
+            chk = board.is_check()
+            board.pop()
+            # Hack: We make sure that checks and captures are always included,
+            # and that no move has a completely non-existent prior.
+            p = max(pre.get(m,0), .01, .1*int(chk or cap))
+            res.append((p,m))
+        return res
 
 
 class Node:
