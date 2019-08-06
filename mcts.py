@@ -52,7 +52,8 @@ class Model:
             # and that no move has a completely non-existent prior.
             p = max(pre.get(m,0), .01, .1*int(chk or cap))
             res.append((p,m))
-        return res
+        psum = sum(p for p, _ in res)
+        return [(p/psum, m) for p, m in res]
 
 
 class Node:
