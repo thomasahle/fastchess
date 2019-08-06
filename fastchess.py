@@ -1,37 +1,19 @@
-import chess, chess.uci
+import chess
 import math
 import sys
 import random
 import fasttext
 
-# Convolutions are not used anymore.
-# Just keeping the code here until a new model is trained.
-CONVOLUTIONS = [(1,1)]
-
-def board_to_words(board):
-    piece_map = board.piece_map()
-    word = []
-    for w, h in CONVOLUTIONS:
-        for f1 in range(-1, 10-w):
-            for r1 in range(-1, 10-h):
-                del word[:]
-                word.append('_'.join(map(str,[w,h,f1,r1])))
-                any_pieces = False
-                for f in range(f1, f1+w):
-                    for r in range(r1, r1+h):
-                        if f < 0 or f > 7 or r < 0 or r > 7:
-                            word.append('x')
-                        else:
-                            s = chess.square(f,r)
-                            piece = piece_map.get(s, None)
-                            if piece is None:
-                                word.append('-')
-                            else:
-                                any_pieces = True
-                                word.append(piece.symbol())
-                if any_pieces:
-                    yield ''.join(word)
-
+def board_to_words(board, occ=False):
+    for s, p in board.piece_map().items():
+        yield f'{chess.SQUARE_NAMES[s]}{p.symbol()}'
+    if board.castling_rights & chess.BB_H1: yield 'H1-C'
+    if board.castling_rights & chess.BB_H8: yield 'H8-C'
+    if board.castling_rights & chess.BB_A1: yield 'A1-C'
+    if board.castling_rights & chess.BB_A8: yield 'A8-C'
+    if occ:
+        for square in chess.scan_forward(board.occupied):
+            yield f'{chess.SQUARE_NAMES[square]}-Occ'
 
 def mirror_move(move):
     return chess.Move(chess.square_mirror(move.from_square),
@@ -39,22 +21,28 @@ def mirror_move(move):
                       move.promotion)
 
 
-def prepare_example(board, move):
+def prepare_example(board, move, occ=False):
     if board.turn == chess.WHITE:
-        string = ' '.join(board_to_words(board))
+        string = ' '.join(board_to_words(board, occ=occ))
         uci_move = move.uci()
     else:
-        string = ' '.join(board_to_words(board.mirror()))
+        string = ' '.join(board_to_words(board.mirror(), occ=occ))
         uci_move = mirror_move(move).uci()
     return f'{string} __label__{uci_move}'
 
 
 class Model:
-    def __init__(self, path):
+    def __init__(self, path, occ):
         self.model = fasttext.load_model(path)
+        self.occ = occ
 
     def find_move(self, board, max_labels=20, pick_random=False, debug=True, flipped=False):
         # Keep predicting more labels until a legal one comes up
+        if board.turn == chess.BLACK:
+            return mirror_move(self.find_move(
+                    board.mirror(), max_labels, pick_random, debug, flipped=True))
+
+        pos = ' '.join(board_to_words(board, occ=self.occ))
         for k in range(10, max_labels, 5):
             ps_mvs = self.find_moves(board, max_labels, debug, flipped)
             if not ps_mvs:

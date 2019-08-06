@@ -175,11 +175,12 @@ def main():
     parser.add_argument('-mcts', nargs='?', help='Play stronger (hopefully)', metavar='ROLLS', const=800, default=1, type=int)
     parser.add_argument('-pvs', nargs='?', help='Show Principal Variations (when mcts)', const=3, default=0, type=int)
     parser.add_argument('-fen', help='Start from given position', default='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
+    parser.add_argument('-occ', action='store_true', help='Add -Occ features')
     args = parser.parse_args()
 
     if args.debug:
         print('Loading model...')
-    fastchess_model = fastchess.Model(args.model_path)
+    fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
     model = MCTS_Model(fastchess_model, rolls=args.mcts, pvs=args.pvs)
     board = chess.Board(args.fen)
 

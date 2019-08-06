@@ -4,7 +4,6 @@ from pathlib import Path
 import argparse
 import fastchess
 
-
 def binary_encode(board):
     """ Returns the board as a binary vector, for eval prediction purposes. """
     rows = []
@@ -34,6 +33,7 @@ def main():
     parser.add_argument('-train', help='train out')
     parser.add_argument('-ttsplit', default=.8, help='test train split')
     parser.add_argument('-eval', action='store_true', help='predict eval rather than moves')
+    parser.add_argument('-occ', action="store_true")
     args = parser.parse_args()
 
     # TODO: Consider input features for
@@ -41,7 +41,7 @@ def main():
     # - past move
     # - occupied squares (makes it easier to play legally)
     # - whether the king is in check
-    # - attackers/defenders for each square
+    # - attackers/defenders fr each square
 
     progress = 0
     last_print = 0
@@ -60,7 +60,7 @@ def main():
                         # Weirdly, the board associated with the node is the result
                         # of the move, rather than from before the move
                         line = fastchess.prepare_example(
-                                node.parent.board(), node.move, 0, only_move=True)
+                                node.parent.board(), node.move, 0, only_move=True, occ=args.occ)
                         print(line, file=(
                             trainfile if random.random() < args.ttsplit else testfile))
                         progress += 1
