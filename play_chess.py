@@ -37,25 +37,27 @@ def get_user_color():
 
 def print_unicode_board(board, perspective=chess.WHITE):
     """ Prints the position from a given perspective. """
-    print()
     uni_pieces = {
             'r':'♜', 'n':'♞', 'b':'♝', 'q':'♛', 'k':'♚', 'p':'♟',
-            'R':'♖', 'N':'♘', 'B':'♗', 'Q':'♕', 'K':'♔', 'P':'♙',
-            '.': ' ', ' ': ' ', '\n': '\n'}
-    board_str = str(board)
-    if perspective == chess.BLACK:
-        board_str = '\n'.join(line[::-1] for line in board_str.split('\n')[::-1])
-    colored = []
-    for i, p in enumerate(board_str):
-        if (i//2 + i//16) % 2 == 0: colored.append('\x1b[0;30;107m' + uni_pieces[p])
-        if (i//2 + i//16) % 2 == 1: colored.append('\x1b[0;30;47m' + uni_pieces[p])
-    lines = ''.join(colored).split('\n')
+            'R':'♖', 'N':'♘', 'B':'♗', 'Q':'♕', 'K':'♔', 'P':'♙'}
     sc, ec = '\x1b[0;30;107m', '\x1b[0m'
+    for r in range(8) if perspective == chess.BLACK else range(7,-1,-1):
+        line = [f'{sc} {r+1}']
+        for c in range(8) if perspective == chess.WHITE else range(7,-1,-1):
+            color = '\x1b[48;5;255m' if (r + c) % 2 == 0 else '\x1b[48;5;253m'
+            if board.move_stack:
+                if board.move_stack[-1].to_square == 8*r + c:
+                    color = '\x1b[48;5;153m'
+                elif board.move_stack[-1].from_square == 8*r + c:
+                    color = '\x1b[48;5;153m'
+            piece = board.piece_at(8*r + c)
+            if piece:
+                line.append(color + uni_pieces[piece.symbol()])
+            else: line.append(color + ' ')
+        print(' ' + ' '.join(line) + f' {sc} {ec}')
     if perspective == chess.WHITE:
-        print('\n'.join(f' {sc} {8-i} {line} {sc} {ec}' for i, line in enumerate(lines)))
         print(f' {sc}   a b c d e f g h  {ec}\n')
     else:
-        print('\n'.join(f' {sc} {1+i} {line} {sc} {ec}' for i, line in enumerate(lines)))
         print(f' {sc}   h g f e d c b a  {ec}\n')
 
 
@@ -66,7 +68,7 @@ def self_play(model, rand=False, debug=False, board=None):
     while not board.is_game_over():
         print_unicode_board(board)
         move = model.find_move(board, debug=debug, pick_random=rand)
-        print(f' My move: {board.san(move)}')
+        print(f'\n My move: {board.san(move)}')
         board.push(move)
 
     # Print status
