@@ -66,7 +66,7 @@ class Node:
         self.move = move
         self.board = None # We expand this as the node is visited
         self.P = prior
-        self.Q = 1 # Q, avg reward of node
+        self.Q = .99 # Q, avg reward of node
         self.N = 0 # N, total visit count for node
         self.model = model
         self.debug = debug
@@ -107,14 +107,24 @@ class Node:
                 if self.board.is_legal(move):
                     self.children.append(Node(self.board, move, p, self.model))
 
-        # Find best child
+        # Identify losses, just an optimization for mates
+        #if all(n.Q == 1 for n in self.children):
+        #    self.Q = -1
+        #    return -1
+
+        # Find best child (small optimization, since this is actually a bottle neck)
+        sqrtN = self.N**.5
         node = max(self.children,
-                   key = lambda n: -n.Q + CPUCT * n.P * sqrt(self.N) / (1 + n.N))
+                   key = lambda n: -n.Q + CPUCT * n.P * sqrtN / (1 + n.N))
+
         # Visit it
         s = -node.rollout()
-        # Note that Q is an average in the newer paper.
+        # Identify victories
+        #if s == 1:
+        #    self.Q = 1
+        #    return 1
         self.Q = ((self.N-1)*self.Q + s)/self.N
-        # Return the terminal value, not our own
+        # Propagate the value further up the tree
         return s
 
 

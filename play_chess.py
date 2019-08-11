@@ -101,10 +101,15 @@ class MCTS_Model:
         self.pvs = pvs
         self.node = None
 
-    def print_pvs(self):
+    def print_pvs(self, is_update):
         """ print `pvs` pvs starting from root """
         root = self.node
         pvs = min(self.pvs, len(root.children))
+        # First time we need to make some space
+        if not is_update:
+            print('\n'*pvs, end='')
+        # Move up and clear the lines
+        print(f"\u001b[1A\u001b[K"*pvs, end='')
         for i in range(pvs):
             pv = []
             node = root
@@ -120,8 +125,6 @@ class MCTS_Model:
             if len(pv) >= 10:
                 pv = pv[:10] + ['...']
             print(f'Pv{i+1}:', ', '.join(pv))
-        print("\u001b[1000D", end='') # Move left
-        print(f"\u001b[{pvs}A", end='') # Move up
 
     def find_move(self, board, debug=False, pick_random=False):
         # We try to reuse the previous node, but if we can't, we create a new one.
@@ -148,13 +151,10 @@ class MCTS_Model:
         for i in range(self.rolls):
             self.node.rollout()
             if self.pvs and (i % 100 == 0 or i == self.rolls-1):
-                self.print_pvs()
-        # Clean up
-        if self.pvs:
-            print('\n'*self.pvs, end='')
-        if max(n.N for n in self.node.children)/self.node.N < .2:
-            print('Thinking extra deeply.')
-            return self.find_move(board, debug, pick_random)
+                self.print_pvs(i)
+        #if max(n.N for n in self.node.children)/self.node.N < .2:
+            #print('Thinking extra deeply.')
+            #return self.find_move(board, debug, pick_random)
 
         # Pick best or random child
         if pick_random:
@@ -186,6 +186,8 @@ def main():
 
     try:
         if args.selfplay:
+            import cProfile as profile
+            #profile.runctx('self_play(model, rand=args.rand, debug=args.debug, board=board)', globals(), locals())
             self_play(model, rand=args.rand, debug=args.debug, board=board)
         else:
             # If playing the model directly, we add a bit of sleep so the user can
