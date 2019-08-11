@@ -158,7 +158,7 @@ class MCTS_Model:
 
         # Pick best or random child
         if pick_random:
-            counts = [node.N for node in self.children]
+            counts = [n.N for n in self.node.children]
             self.node = random.choices(self.node.children, weights=counts)[0]
         else:
             self.node = max(self.node.children, key = lambda n: n.N)
