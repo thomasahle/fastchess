@@ -71,7 +71,7 @@ class Model:
             white_moves = self.find_moves(board.mirror(), n_labels, debug, flipped=True)
             return [(p,mirror_move(m)) for p,m in white_moves]
 
-        pos = ' '.join(board_to_words(board))
+        pos = ' '.join(board_to_words(board, occ=self.occ))
         labels, probs = self.model.predict(pos, n_labels)
         labels = [l[len('__label__'):] for l in labels]
 
