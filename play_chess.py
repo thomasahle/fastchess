@@ -64,13 +64,13 @@ def print_unicode_board(board, perspective=chess.WHITE):
         print(f' {sc}   h g f e d c b a  {ec}\n')
 
 
-def self_play(model, rand=0, debug=False, board=None):
+def self_play(model, rolls, rand=0, debug=False, board=None):
     if not board:
         board = chess.Board()
 
     while not board.is_game_over():
         print_unicode_board(board)
-        move = model.find_move(board, debug=debug, temperature=rand)
+        move = model.find_move(board, rolls=rolls, debug=debug, temperature=rand)
         print(f'\n My move: {board.san(move)}')
         board.push(move)
 
@@ -79,7 +79,7 @@ def self_play(model, rand=0, debug=False, board=None):
     print('Result:', board.result())
 
 
-def play(model, rand=0, debug=False, board=None):
+def play(model, rolls, rand=0, debug=False, board=None):
     user_color = get_user_color()
     if not board:
         board = chess.Board()
@@ -89,7 +89,7 @@ def play(model, rand=0, debug=False, board=None):
         if user_color == board.turn:
             move = get_user_move(board)
         else:
-            move = model.find_move(board, debug=debug, temperature=rand)
+            move = model.find_move(board, rolls=rolls, debug=debug, temperature=rand)
             print(f' My move: {board.san(move)}')
         board.push(move)
 
@@ -99,11 +99,11 @@ def play(model, rand=0, debug=False, board=None):
 
 
 class MCTS_Model:
-    def __init__(self, fasttext_model, rolls, pvs=0):
+    def __init__(self, fasttext_model, pvs=0, uci_format=False):
         self.model = mcts.Model(fasttext_model)
-        self.rolls = rolls
         self.pvs = pvs
         self.node = None
+        self.uci_format = uci_format
 
     def print_pvs(self, pvs):
         """ print `pvs` pvs starting from root """
@@ -119,11 +119,16 @@ class MCTS_Model:
                 else:
                     node = max(node.children, key=lambda n: n.N)
                     san = node.parent_board.san(node.move)
+                if self.uci_format:
+                    san = node.move.uci()
                 pv.append(san)
-            # Trim length of pv
-            if len(pv) >= 10:
-                pv = pv[:10] + ['...']
-            print(f'Pv{i+1}:', ', '.join(pv))
+
+            if self.uci_format:
+                print(f'multipv {i+1}', ' '.join(pv))
+            else:
+                if len(pv) >= 10:
+                    pv = pv[:10] + ['...']
+                print(f'Pv{i+1}:', ', '.join(pv))
 
     def print_stats(self, is_first):
         if is_first:
@@ -142,11 +147,15 @@ class MCTS_Model:
             nps = 100 / (new_time - self.old_time)
             self.old_time = new_time
             t = new_time - self.start_time
-            print(f'KL: {kl_div:.3} rolls: {self.node.N}'
-                  f' nps: {nps:.0f} t: {t:.1f}s')
+            if self.uci_format:
+                print(f'info score {self.node.Q} time {t} nodes {self.node.N}')
+            else:
+                print(f'KL: {kl_div:.3} rolls: {self.node.N}'
+                      f' nps: {nps:.0f} t: {t:.1f}s')
             return kl_div
 
-    def find_move(self, board, debug=False, temperature=False):
+    def find_move(self, board, rolls, movetime=0, debug=False, temperature=False):
+        """ Searches for `movetime' milliseconds, or if 0, for about `rolls` rollouts. """
         # We try to reuse the previous node, but if we can't, we create a new one.
         if self.node:
             # Check if the board is at one of our children (like pondering)
@@ -177,12 +186,14 @@ class MCTS_Model:
             if self.node.N % 100 == 0:
                 # Remove old PVs and stats lines
                 pvs = min(self.pvs, len(self.node.children))
-                if not first:
+                if not first and not self.uci_format:
                     print(f"\u001b[1A\u001b[K" * (pvs + 1), end='')
                 if self.pvs:
                     self.print_pvs(pvs)
                 kl_div = self.print_stats(first)
-                if kl_div < 1 / self.rolls:
+                if movetime > 0 and time.time() > self.start_time + movetime:
+                        break
+                if rolls and kl_div < 1/rolls:
                     break
                 first = False
 
@@ -226,7 +237,7 @@ def main():
     if args.debug:
         print('Loading model...')
     fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
-    model = MCTS_Model(fastchess_model, rolls=args.mcts, pvs=args.pvs)
+    model = MCTS_Model(fastchess_model, pvs=args.pvs)
     board = chess.Board(args.fen)
 
     try:
@@ -236,9 +247,9 @@ def main():
                 profile.runctx(
                     'self_play(model, rand=args.rand, debug=args.debug, board=board)', globals(), locals())
             else:
-                self_play(model, rand=args.rand, debug=args.debug, board=board)
+                self_play(model, rolls=args.mcts, rand=args.rand, debug=args.debug, board=board)
         else:
-            play(model, rand=args.rand, debug=args.debug, board=board)
+            play(model, rolls=args.mcts, rand=args.rand, debug=args.debug, board=board)
     except KeyboardInterrupt:
         pass
     finally:
