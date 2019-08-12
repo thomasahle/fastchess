@@ -44,7 +44,7 @@ def print_unicode_board(board, perspective=chess.WHITE):
     for r in range(8) if perspective == chess.BLACK else range(7,-1,-1):
         line = [f'{sc} {r+1}']
         for c in range(8) if perspective == chess.WHITE else range(7,-1,-1):
-            color = '\x1b[48;5;255m' if (r + c) % 2 == 0 else '\x1b[48;5;253m'
+            color = '\x1b[48;5;255m' if (r + c) % 2 == 1 else '\x1b[48;5;253m'
             if board.move_stack:
                 if board.move_stack[-1].to_square == 8*r + c:
                     color = '\x1b[48;5;153m'
@@ -154,9 +154,12 @@ class MCTS_Model:
             self.node.rollout()
             if self.pvs and (i % 100 == 0 or i == self.rolls-1):
                 self.print_pvs(i)
-        #if max(n.N for n in self.node.children)/self.node.N < .2:
-            #print('Thinking extra deeply.')
-            #return self.find_move(board, debug, pick_random)
+
+        # Simple time management for difficult positions.
+        # TODO: Use KL-Divergence gain or something else fancy
+        if max(n.N for n in self.node.children)/self.node.N < .2:
+            print('Thinking extra deeply.')
+            return self.find_move(board, debug, pick_random)
 
         # Pick best or random child
         if pick_random:
