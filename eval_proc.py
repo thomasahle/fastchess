@@ -18,10 +18,12 @@ args = parser.parse_args()
 # Used for games
 POS_PER_GAME = 2
 
+
 def encode_move(move):
     if move.promotion:
         return 64**2 + move.promotion - 1
     return move.from_square + move.to_square*64
+
 
 rows = []
 ress = []
@@ -29,7 +31,7 @@ last_print = 0
 for p in Path('.').glob(args.files):
     print('Doing', p)
     with open(p) as file:
-        for game in iter(lambda:chess.pgn.read_game(file), None):
+        for game in iter(lambda: chess.pgn.read_game(file), None):
             if len(rows) >= last_print + 100:
                 last_print = len(rows)
                 print(len(rows), end='\r')
@@ -39,7 +41,8 @@ for p in Path('.').glob(args.files):
                     rows.append(encode(node.board()))
                     ress.append(encode_move(node.move))
             else:
-                res = {'1-0':1, '0-1':-1, '1/2-1/2':0}[game.headers['Result']]
+                res = {'1-0': 1, '0-1': -1,
+                       '1/2-1/2': 0}[game.headers['Result']]
                 ress += [res]*POS_PER_GAME
 
                 nodes = random.sample(list(game.mainline()), POS_PER_GAME)

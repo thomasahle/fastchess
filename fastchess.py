@@ -4,16 +4,22 @@ import sys
 import random
 import fasttext
 
+
 def board_to_words(board, occ=False):
     for s, p in board.piece_map().items():
         yield f'{chess.SQUARE_NAMES[s]}{p.symbol()}'
-    if board.castling_rights & chess.BB_H1: yield 'H1-C'
-    if board.castling_rights & chess.BB_H8: yield 'H8-C'
-    if board.castling_rights & chess.BB_A1: yield 'A1-C'
-    if board.castling_rights & chess.BB_A8: yield 'A8-C'
+    if board.castling_rights & chess.BB_H1:
+        yield 'H1-C'
+    if board.castling_rights & chess.BB_H8:
+        yield 'H8-C'
+    if board.castling_rights & chess.BB_A1:
+        yield 'A1-C'
+    if board.castling_rights & chess.BB_A8:
+        yield 'A8-C'
     if occ:
         for square in chess.scan_forward(board.occupied):
             yield f'{chess.SQUARE_NAMES[square]}-Occ'
+
 
 def mirror_move(move):
     return chess.Move(chess.square_mirror(move.from_square),
@@ -40,7 +46,7 @@ class Model:
         # Keep predicting more labels until a legal one comes up
         if board.turn == chess.BLACK:
             return mirror_move(self.find_move(
-                    board.mirror(), max_labels, pick_random, debug, flipped=True))
+                board.mirror(), max_labels, pick_random, debug, flipped=True))
 
         pos = ' '.join(board_to_words(board, occ=self.occ))
         for k in range(10, max_labels, 5):
@@ -51,7 +57,7 @@ class Model:
             if pick_random:
                 # Return move by probability distribution
                 ps, mvs = zip(*ps_mvs)
-                return random.choices(mvs, weights = ps)[0]
+                return random.choices(mvs, weights=ps)[0]
             else:
                 # Return best legal move
                 p, mv = max(ps_mvs)
@@ -68,8 +74,9 @@ class Model:
             to legal moves.  Probabilities may not sum to 1. """
 
         if board.turn == chess.BLACK:
-            white_moves = self.find_moves(board.mirror(), n_labels, debug, flipped=True)
-            return [(p,mirror_move(m)) for p,m in white_moves]
+            white_moves = self.find_moves(
+                board.mirror(), n_labels, debug, flipped=True)
+            return [(p, mirror_move(m)) for p, m in white_moves]
 
         pos = ' '.join(board_to_words(board, occ=self.occ))
         labels, probs = self.model.predict(pos, n_labels)
@@ -92,6 +99,5 @@ class Model:
                 top_list.append(f'{san} ({tag})')
             print('Top moves:', ', '.join(top_list))
 
-        return [(p,m) for m, p in zip(map(chess.Move.from_uci, labels), probs)
-                    if board.is_legal(m)]
-
+        return [(p, m) for m, p in zip(map(chess.Move.from_uci, labels), probs)
+                if board.is_legal(m)]

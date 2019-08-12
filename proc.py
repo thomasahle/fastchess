@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse
 import fastchess
 
+
 def binary_encode(board):
     """ Returns the board as a binary vector, for eval prediction purposes. """
     rows = []
@@ -16,13 +17,13 @@ def binary_encode(board):
         ep[board.ep_square] = 1
     rows.append(ep)
     rows.append([
-            int(board.turn),
-            int(bool(board.castling_rights & chess.BB_A1)),
-            int(bool(board.castling_rights & chess.BB_H1)),
-            int(bool(board.castling_rights & chess.BB_A8)),
-            int(bool(board.castling_rights & chess.BB_H8)),
-            int(board.is_check())
-            ])
+        int(board.turn),
+        int(bool(board.castling_rights & chess.BB_A1)),
+        int(bool(board.castling_rights & chess.BB_H1)),
+        int(bool(board.castling_rights & chess.BB_A8)),
+        int(bool(board.castling_rights & chess.BB_H8)),
+        int(board.is_check())
+    ])
     return np.concatenate(rows)
 
 
@@ -32,7 +33,8 @@ def main():
     parser.add_argument('-test', help='test out')
     parser.add_argument('-train', help='train out')
     parser.add_argument('-ttsplit', default=.8, help='test train split')
-    parser.add_argument('-eval', action='store_true', help='predict eval rather than moves')
+    parser.add_argument('-eval', action='store_true',
+                        help='predict eval rather than moves')
     parser.add_argument('-occ', action="store_true")
     args = parser.parse_args()
 
@@ -49,7 +51,7 @@ def main():
         for p in Path('.').glob(args.files):
             print('Doing', p)
             with open(p) as file:
-                for game in iter(lambda:chess.pgn.read_game(file), None):
+                for game in iter(lambda: chess.pgn.read_game(file), None):
                     if progress >= last_print + 100:
                         last_print = progress
                         print(progress, end='\r')
@@ -60,7 +62,7 @@ def main():
                         # Weirdly, the board associated with the node is the result
                         # of the move, rather than from before the move
                         line = fastchess.prepare_example(
-                                node.parent.board(), node.move, 0, only_move=True, occ=args.occ)
+                            node.parent.board(), node.move, 0, only_move=True, occ=args.occ)
                         print(line, file=(
                             trainfile if random.random() < args.ttsplit else testfile))
                         progress += 1

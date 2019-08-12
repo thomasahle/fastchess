@@ -32,7 +32,7 @@ if tensor:
     if os.path.isfile(tens_name):
         X = sp.sparse.load_npz(tens_name)
     else:
-        X = sp.sparse.vstack((row.T@row).reshape(1,-1) for row in X).tocsr()
+        X = sp.sparse.vstack((row.T@row).reshape(1, -1) for row in X).tocsr()
         sp.sparse.save_npz(tens_name, X)
     print('tensoring done')
 
@@ -41,18 +41,19 @@ if tensor_sketch != 0:
         print('Tensor sketch makes dense matrices, so we have to use method=lstsq')
     print(f'Doing the sketch {tensor_sketch}')
     n, d = X.shape
-    m = d # make it larger?
+    m = d  # make it larger?
     if tensor_sketch == 1:
         M = np.random.randint(-1, 2, (d, m)) / (m*2/3)**.5
         T = np.random.randint(-1, 2, (d, m)) / (m*2/3)**.5
         X = (X@M)*(X@T)
     elif tensor_sketch == 2:
         M = np.random.randint(-1, 2, (d**2, m)) / (m*2/3)**.5
+
         def blocks():
             bs = 10000
             for i in range(0, n, bs):
                 Y = X[i:i+bs].todense()
-                Y = sp.einsum('ij,ik->ijk', Y, Y).reshape(Y.shape[0],-1)
+                Y = sp.einsum('ij,ik->ijk', Y, Y).reshape(Y.shape[0], -1)
                 Y = Y@M
                 yield Y
         X = np.vstack(blocks())
@@ -65,7 +66,7 @@ if add_counts:
     print('Adding counts')
     cols = []
     for i in range(2*6):
-        cols.append(X[:,i*64:(i+1)*64].sum(axis=1))
+        cols.append(X[:, i*64:(i+1)*64].sum(axis=1))
     X = sp.sparse.hstack([X]+cols).tocsr()
 
 n, d = X.shape
@@ -74,14 +75,16 @@ ntrain = int(n * split)
 Xtrain, Xtest = X[:ntrain], X[ntrain:]
 Ytrain, Ytest = Y[:ntrain], Y[ntrain:]
 
+
 def print_tables(w):
     for i, color in enumerate([chess.WHITE, chess.BLACK]):
         for j, ptype in enumerate(range(chess.PAWN, chess.KING+1)):
-            table = w[j*64+i*64*6:(j+1)*64+i*64*6].reshape(8,8)
+            table = w[j*64+i*64*6:(j+1)*64+i*64*6].reshape(8, 8)
             print(chess.Piece(ptype, color))
             if add_counts:
                 print('Val:', w[12*64+6*i+j])
             print(table.round(2))
+
 
 print('Running regressions')
 for rows in [ntrain//30, ntrain//10, ntrain//3, ntrain]:

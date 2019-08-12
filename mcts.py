@@ -18,7 +18,7 @@ class Model:
         """ Returns a single score relative to board.turn """
         # If game over, just stop
         if board.is_game_over():
-            v = {'1-0':1, '0-1':-1, '1/2-1/2':0}[board.result()]
+            v = {'1-0': 1, '0-1': -1, '1/2-1/2': 0}[board.result()]
             return v if board.turn == chess.WHITE else -v
 
         # We first calculate the value relative to white
@@ -41,7 +41,8 @@ class Model:
 
     def predict(self, board, n=40, debug=False):
         """ Returns list of `n` (prob, move) legal pairs """
-        pre = {m:p for p,m in self.fc.find_moves(board, n, debug=debug, flipped=False)}
+        pre = {m: p for p, m in self.fc.find_moves(
+            board, n, debug=debug, flipped=False)}
         res = []
         for m in board.generate_legal_moves():
             cap = board.is_capture(m)
@@ -50,8 +51,8 @@ class Model:
             board.pop()
             # Hack: We make sure that checks and captures are always included,
             # and that no move has a completely non-existent prior.
-            p = max(pre.get(m,0), .01, .1*int(chk or cap))
-            res.append((p,m))
+            p = max(pre.get(m, 0), .01, .1*int(chk or cap))
+            res.append((p, m))
         psum = sum(p for p, _ in res)
         return [(p/psum, m) for p, m in res]
 
@@ -65,10 +66,10 @@ class Node:
         self.children = []
         self.parent_board = parent_board
         self.move = move
-        self.board = None # We expand this as the node is visited
+        self.board = None  # We expand this as the node is visited
         self.P = prior
-        self.Q = .99 # Q, avg reward of node
-        self.N = 0 # N, total visit count for node
+        self.Q = .99  # Q, avg reward of node
+        self.N = 0  # N, total visit count for node
         self.model = model
         self.debug = debug
         # If we are at the root, make a fake first rollout.
@@ -82,7 +83,7 @@ class Node:
         """ Do `rolls` rollouts and return the best move. """
         for i in range(rolls):
             self.rollout()
-        return max(self.children, key = lambda n: n.N).move
+        return max(self.children, key=lambda n: n.N).move
 
     def rollout(self):
         """ Returns the leaf value relative to the current player of the node. """
@@ -96,8 +97,10 @@ class Node:
 
         # If first visit, expand board
         if self.N == 1:
-            # Don't copy the move stack, it just takes up memory.
-            self.board = self.parent_board.copy(stack = False)
+            # Don't copy the entire move stack, it just takes up memory.
+            # We do need some though, to prevent repetition draws.
+            # Half move cluck is copied separately
+            self.board = self.parent_board.copy(stack=8)
             self.board.push(self.move)
             self.Q = self.model.eval(self.board, debug=self.debug)
             return self.Q
@@ -109,23 +112,21 @@ class Node:
                     self.children.append(Node(self.board, move, p, self.model))
 
         # Identify losses, just an optimization for mates
-        #if all(n.Q == 1 for n in self.children):
+        # if all(n.Q == 1 for n in self.children):
         #    self.Q = -1
         #    return -1
 
         # Find best child (small optimization, since this is actually a bottle neck)
         sqrtN = self.N**.5
         node = max(self.children,
-                   key = lambda n: -n.Q + CPUCT * n.P * sqrtN / (1 + n.N))
+                   key=lambda n: -n.Q + CPUCT * n.P * sqrtN / (1 + n.N))
 
         # Visit it
         s = -node.rollout()
         # Identify victories
-        #if s == 1:
+        # if s == 1:
         #    self.Q = 1
         #    return 1
         self.Q = ((self.N-1)*self.Q + s)/self.N
         # Propagate the value further up the tree
         return s
-
-
