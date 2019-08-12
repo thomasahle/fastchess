@@ -22,7 +22,7 @@ POS_PER_GAME = 2
 def encode_move(move):
     if move.promotion:
         return 64**2 + move.promotion - 1
-    return move.from_square + move.to_square*64
+    return move.from_square + move.to_square * 64
 
 
 rows = []
@@ -43,7 +43,7 @@ for p in Path('.').glob(args.files):
             else:
                 res = {'1-0': 1, '0-1': -1,
                        '1/2-1/2': 0}[game.headers['Result']]
-                ress += [res]*POS_PER_GAME
+                ress += [res] * POS_PER_GAME
 
                 nodes = random.sample(list(game.mainline()), POS_PER_GAME)
                 positions = [encode(node.board()) for node in nodes]

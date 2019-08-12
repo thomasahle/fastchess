@@ -9,10 +9,10 @@ def binary_encode(board):
     """ Returns the board as a binary vector, for eval prediction purposes. """
     rows = []
     for color in [chess.WHITE, chess.BLACK]:
-        for ptype in range(chess.PAWN, chess.KING+1):
+        for ptype in range(chess.PAWN, chess.KING + 1):
             mask = board.pieces_mask(ptype, color)
             rows.append(list(map(int, bin(mask)[2:].zfill(64))))
-    ep = [0]*64
+    ep = [0] * 64
     if board.ep_square:
         ep[board.ep_square] = 1
     rows.append(ep)

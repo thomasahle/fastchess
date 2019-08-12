@@ -44,7 +44,7 @@ def play_game(engine, info_handler, model, selfplay_model=None):
         tries = 1
         score, sf_move = {}, None
         while 1 not in score or sf_move is None:
-            sf_move = engine.go(movetime=MOVE_TIME*tries).bestmove
+            sf_move = engine.go(movetime=MOVE_TIME * tries).bestmove
             score = info_handler.info["score"]
             tries += 1
             if tries > 10:
@@ -63,7 +63,7 @@ def play_game(engine, info_handler, model, selfplay_model=None):
         else:
             move = sf_move
             # In the beginning of the game, add some randomness
-            if random.random()*board.fullmove_number < 1:
+            if random.random() * board.fullmove_number < 1:
                 move = random.choice(list(board.legal_moves))
         board.push(move)
 
@@ -77,15 +77,15 @@ def run_thread(thread_id, module, example_queue):
     engine.uci()
     engine.isready()
     start, last = time.time(), 0
-    for i in range(N_GAMES//THREADS):
+    for i in range(N_GAMES // THREADS):
         # Predicting progress and ETA
-        if thread_id == 0 and time.time()-last > .5:
-            pg = i*THREADS/N_GAMES
+        if thread_id == 0 and time.time() - last > .5:
+            pg = i * THREADS / N_GAMES
             if i == 0:
-                pg += 1/1000000
-            etr = (time.time() - start)*(1/pg-1)
+                pg += 1 / 1000000
+            etr = (time.time() - start) * (1 / pg - 1)
             print('Progress: {:.1f}%. Remaining: {}'
-                  .format(pg*100, str(timedelta(seconds=int(etr)))),
+                  .format(pg * 100, str(timedelta(seconds=int(etr)))),
                   file=sys.stderr, end='\r')
             last = time.time()
 

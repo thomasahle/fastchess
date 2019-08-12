@@ -19,13 +19,13 @@ def board_to_vec(board):
 
 
 def move_to_vec(move):
-    return move.from_square + move.to_square*64
+    return move.from_square + move.to_square * 64
 
 
 def pscore(score):
     if score.cp is not None:
         cp = score.cp
-        score = 2/(1 + 10**(-cp/400)) - 1
+        score = 2 / (1 + 10**(-cp / 400)) - 1
         #score = cp
         return score
     elif score.mate < 0:
@@ -37,11 +37,11 @@ def pscore(score):
 def prepare_example(board, move, score):
     if board.turn == chess.WHITE:
         vec_board = board_to_vec(board)
-        vec_move = move.from_square + move.to_square*64
+        vec_move = move.from_square + move.to_square * 64
     else:
         vec_board = board_to_vec(board.mirror())
         vec_move = chess.square_mirror(
-            move.from_square) + chess.square_mirror(move.to_square)*64
+            move.from_square) + chess.square_mirror(move.to_square) * 64
     #print(score, pscore(score))
     return vec_board, vec_move, pscore(score)
 
@@ -49,7 +49,7 @@ def prepare_example(board, move, score):
 class FJL:
     def __init__(self, d, m=1000):
         self.sig = np.random.randint(-1, 1, d)
-        self.sam = np.random.randint(0, d//2+1, m//2+1)
+        self.sam = np.random.randint(0, d // 2 + 1, m // 2 + 1)
 
     def __matmul__(self, v):
         # FJL is a matrix, dammit
@@ -72,7 +72,7 @@ class ExampleHandler:
         self.boards = []
         self.moves = []
         self.scores = []
-        self.sketches = [FJL((6*2*64)**2, 10000)
+        self.sketches = [FJL((6 * 2 * 64)**2, 10000)
                          # , FJL(6*2*64*1000, 1000)
                          ]
 
@@ -95,7 +95,7 @@ class ExampleHandler:
 
         n = len(self.boards)
         print(f'Got {n} examples')
-        p = int(n*.8)
+        p = int(n * .8)
 
         print('Training move model')
         #move_clf = self.move_model.partial_fit(self.boards[:p], self.moves[:p], classes=range(64**2))

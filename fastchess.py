@@ -42,7 +42,8 @@ class Model:
         self.model = fasttext.load_model(path)
         self.occ = occ
 
-    def find_move(self, board, max_labels=20, pick_random=False, debug=True, flipped=False):
+    def find_move(self, board, max_labels=20,
+                  pick_random=False, debug=True, flipped=False):
         # Keep predicting more labels until a legal one comes up
         if board.turn == chess.BLACK:
             return mirror_move(self.find_move(

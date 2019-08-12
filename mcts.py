@@ -26,14 +26,14 @@ class Model:
         for square, piece in board.piece_map().items():
             p = piece.symbol()
             if p.isupper():
-                res += pst.piece[p] + pst.pst[p][63-square]
+                res += pst.piece[p] + pst.pst[p][63 - square]
             else:
                 p = p.upper()
                 res -= pst.piece[p] + pst.pst[p][square]
         if debug:
             print('Pre norm score:', res)
         # Normalize in [-1, 1]
-        res = math.atan(res/100)/math.pi*2
+        res = math.atan(res / 100) / math.pi * 2
         if debug:
             print('Post norm score:', res)
         # Then flip it to the current player
@@ -51,10 +51,10 @@ class Model:
             board.pop()
             # Hack: We make sure that checks and captures are always included,
             # and that no move has a completely non-existent prior.
-            p = max(pre.get(m, 0), .01, .1*int(chk or cap))
+            p = max(pre.get(m, 0), .01, .1 * int(chk or cap))
             res.append((p, m))
         psum = sum(p for p, _ in res)
-        return [(p/psum, m) for p, m in res]
+        return [(p / psum, m) for p, m in res]
 
 
 class Node:
@@ -127,6 +127,6 @@ class Node:
         # if s == 1:
         #    self.Q = 1
         #    return 1
-        self.Q = ((self.N-1)*self.Q + s)/self.N
+        self.Q = ((self.N - 1) * self.Q + s) / self.N
         # Propagate the value further up the tree
         return s

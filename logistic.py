@@ -69,7 +69,7 @@ print('Making batches')
 # for rows in [ntrain//30, ntrain//10, ntrain//3, ntrain]:
 if args.model == 'sgd':
     bs = 100
-    batches = ((i, i+bs) for i in range(0, ntrain, bs))
+    batches = ((i, i + bs) for i in range(0, ntrain, bs))
 else:
     batches = [(0, 2**i)
                for i in range(5, 30) if 2**i < ntrain] + [(0, ntrain)]
@@ -85,9 +85,9 @@ for r1, r2 in batches:
     else:
         clf.fit(Xr, Yr)
     t = time.time() - t
-    acc = np.sum(clf.predict(Xtest) == Ytest) / (n-ntrain)
+    acc = np.sum(clf.predict(Xtest) == Ytest) / (n - ntrain)
     # TODO: amount of valid moves
-    rows = r2-r1
+    rows = r2 - r1
     print(
         f'Rows: {rows}, Accuracy: {acc:.3%}, Time: {t:.1f}s, Per row/s: {rows/t:.1f}')
     #np.save(args.cout, np.hstack([clf.coef_, clf.intercept_[:,None]]))

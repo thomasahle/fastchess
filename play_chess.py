@@ -48,11 +48,11 @@ def print_unicode_board(board, perspective=chess.WHITE):
         for c in range(8) if perspective == chess.WHITE else range(7, -1, -1):
             color = '\x1b[48;5;255m' if (r + c) % 2 == 1 else '\x1b[48;5;253m'
             if board.move_stack:
-                if board.move_stack[-1].to_square == 8*r + c:
+                if board.move_stack[-1].to_square == 8 * r + c:
                     color = '\x1b[48;5;153m'
-                elif board.move_stack[-1].from_square == 8*r + c:
+                elif board.move_stack[-1].from_square == 8 * r + c:
                     color = '\x1b[48;5;153m'
-            piece = board.piece_at(8*r + c)
+            piece = board.piece_at(8 * r + c)
             if piece:
                 line.append(color + uni_pieces[piece.symbol()])
             else:
@@ -127,19 +127,19 @@ class MCTS_Model:
 
     def print_stats(self, is_first):
         if is_first:
-            self.old_dist = np.array([1+n.N for n in self.node.children])
-            self.old_dist = self.old_dist/self.old_dist.sum()
+            self.old_dist = np.array([1 + n.N for n in self.node.children])
+            self.old_dist = self.old_dist / self.old_dist.sum()
             self.start_time = time.time()
             self.old_time = time.time()
             print()  # Make space
             return 1
         else:
-            dist = np.array([1+n.N for n in self.node.children])
-            dist = dist/dist.sum()
+            dist = np.array([1 + n.N for n in self.node.children])
+            dist = dist / dist.sum()
             kl_div = np.sum(dist * np.log(dist / self.old_dist))
             self.old_dist = dist
             new_time = time.time()
-            nps = 100/(new_time - self.old_time)
+            nps = 100 / (new_time - self.old_time)
             self.old_time = new_time
             t = new_time - self.start_time
             print(f'KL: {kl_div:.3} rolls: {self.node.N}'
@@ -166,8 +166,7 @@ class MCTS_Model:
         # Print priors for new root node
         if debug:
             self.node.rollout()  # Ensure children are expanded
-            nodes = sorted(self.node.children,
-                           key=lambda n: n.P, reverse=True)[:7]
+            nodes = sorted(self.node.children, key=lambda n: n.P, reverse=True)[:7]
             print('Priors:', ', '.join(
                 f'{board.san(n.move)} {n.P:.1%}' for n in nodes))
 
@@ -179,22 +178,22 @@ class MCTS_Model:
                 # Remove old PVs and stats lines
                 pvs = min(self.pvs, len(self.node.children))
                 if not first:
-                    print(f"\u001b[1A\u001b[K"*(pvs+1), end='')
+                    print(f"\u001b[1A\u001b[K" * (pvs + 1), end='')
                 if self.pvs:
                     self.print_pvs(pvs)
                 kl_div = self.print_stats(first)
-                if kl_div < 1/self.rolls:
+                if kl_div < 1 / self.rolls:
                     break
                 first = False
 
         # Pick best or random child
         if temperature:
-            counts = [(n.N/self.node.N)**(1/temperature) for n in self.node.children]
+            counts = [(n.N / self.node.N)**(1 / temperature) for n in self.node.children]
             node = random.choices(self.node.children, weights=counts)[0]
             if debug:
                 o = sorted(self.node.children, key=lambda n: -n.N).index(node)
                 ordinal = (lambda n: "%d%s" % (n, "tsnrhtdd"[
-                           (n/10 % 10 != 1)*(n % 10 < 4)*n % 10::4]))(o+1)
+                           (n / 10 % 10 != 1) * (n % 10 < 4) * n % 10::4]))(o + 1)
                 #pct = counts[self.node.children.index(node)] * 100
                 print(f'Chose {ordinal} child. (temp={temperature})')
             self.node = node
@@ -220,7 +219,8 @@ def main():
     parser.add_argument('-fen', help='Start from given position',
                         default='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
     parser.add_argument('-occ', action='store_true', help='Add -Occ features')
-    parser.add_argument('-profile', action='store_true', help='Run profiling. (Only with selfplay)')
+    parser.add_argument('-profile', action='store_true',
+                        help='Run profiling. (Only with selfplay)')
     args = parser.parse_args()
 
     if args.debug:
@@ -233,7 +233,8 @@ def main():
         if args.selfplay:
             if args.profile:
                 import cProfile as profile
-                profile.runctx('self_play(model, rand=args.rand, debug=args.debug, board=board)', globals(), locals())
+                profile.runctx(
+                    'self_play(model, rand=args.rand, debug=args.debug, board=board)', globals(), locals())
             else:
                 self_play(model, rand=args.rand, debug=args.debug, board=board)
         else:
