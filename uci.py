@@ -23,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('model_path', help='Location of fasttext model to use')
     parser.add_argument('-occ', action='store_true', help='Add -Occ features')
+    parser.add_argument('-rand', nargs='?', metavar='TEMP', const=1, default=0, type=float, help='Play random moves from the posterior distribution to the 1/temp power.')
     args = parser.parse_args()
 
     fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
@@ -72,19 +73,19 @@ def main():
             movetime = int(params.get('movetime', 0))/1000
             wtime = int(params.get('wtime', 0))/1000
             btime = int(params.get('btime', 0))/1000
-            movestogo = int(params.get('movestogo', 0))
+            movestogo = int(params.get('movestogo', 40))
             print(params, '...')
 
             if not movetime and wtime and btime:
                 if board.turn == chess.WHITE:
-                    movetime = wtime/(movestogo+1)
+                    movetime = wtime/(movestogo)
                 else:
-                    movetime = btime/(movestogo+1)
+                    movetime = btime/(movestogo)
 
             print('going', movetime, wtime, btime)
 
             move = model.find_move(board, rolls=rolls, movetime=movetime,
-                                   debug=False, temperature=0)
+                                   debug=False, temperature=args.rand)
             print('bestmove', move)
 
         elif smove.startswith('time'):
