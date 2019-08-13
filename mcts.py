@@ -46,6 +46,7 @@ class Model:
         res = []
         for m in board.generate_legal_moves():
             cap = board.is_capture(m)
+            # TODO: There might be a faster way, inspired by the is_into_check method.
             board.push(m)
             chk = board.is_check()
             board.pop()
@@ -90,6 +91,7 @@ class Node:
 
         self.N += 1
 
+        # TODO: This repeated is_game_over is actually quite expensive
         if self.board and self.board.is_game_over():
             # If board is set, Q should already be the evaluation, which includes
             # checkmate/stalemate.
@@ -117,6 +119,9 @@ class Node:
         #    return -1
 
         # Find best child (small optimization, since this is actually a bottle neck)
+        # TODO: Even now, this is still pretty slow
+        # _, node = max((-n.Q + CPUCT * n.P * sqrtN / (1 + n.N), n) for n in self.children)
+        # is better, but it fails when two nodes have the same score...
         sqrtN = self.N**.5
         node = max(self.children,
                    key=lambda n: -n.Q + CPUCT * n.P * sqrtN / (1 + n.N))

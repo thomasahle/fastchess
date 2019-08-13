@@ -1,10 +1,15 @@
 import chess
-import fastchess
-from play_chess import MCTS_Model
 import sys
 import argparse
+import re
+import itertools
+from collections import namedtuple
+from enum import Enum
+import time
 
-# TODO: Inspiration from https://github.com/mdoege/sunfish/blob/master/uci.py
+import fastchess
+import mcts
+from controller import MCTS_Controller
 
 # Disable buffering
 class Unbuffered(object):
@@ -17,91 +22,212 @@ class Unbuffered(object):
         return getattr(self.stream, attr)
 sys.stdout = Unbuffered(sys.stdout)
 
-NAME = 'FastChess'
+def uci_or_none(string):
+    try:
+        return chess.Move.from_uci(string)
+    except ValueError:
+        return None
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('model_path', help='Location of fasttext model to use')
-    parser.add_argument('-occ', action='store_true', help='Add -Occ features')
-    parser.add_argument('-rand', nargs='?', metavar='TEMP', const=1, default=0, type=float, help='Play random moves from the posterior distribution to the 1/temp power.')
-    args = parser.parse_args()
+Type_Spin = namedtuple('spin', ['default', 'min', 'max'])
+Type_String = namedtuple('string', ['default'])
+Type_Check = namedtuple('check', ['default'])
+Type_Button = namedtuple('button', [])
+Type_Combo = namedtuple('combo', ['default', 'vars'])
 
-    fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
-    model = MCTS_Model(fastchess_model, pvs=0, uci_format=True)
-    board = chess.Board()
+parser = argparse.ArgumentParser()
+parser.add_argument('model_path', help='Location of fasttext model to use')
+parser.add_argument('-occ', action='store_true', help='Add -Occ features')
+parser.add_argument('-debug', action='store_true', help='Set debug initially')
+parser.add_argument('-rand', nargs='?', metavar='TEMP', const=1, default=0, type=float, help='Play random moves from the posterior distribution to the 1/temp power.')
 
-    our_time, opp_time = 1000, 1000 # time in centi-seconds
+class UCI:
+    def __init__(self, args):
+        self.debug = args.debug
+        self.board = chess.Board()
+        self.option_types = {
+            # Play random moves from the posterior distribution to the 100/temp power.
+            'Temperature': Type_Spin(default=100, min=0, max=10000),
+            'MultiPV': Type_Spin(default=0, min=0, max=10)
+        }
+        self.options = {key: val.default for key, val in self.option_types.items()
+                        if hasattr(val, 'default')}
 
-    print(NAME)
+        fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
+        self.model = MCTS_Controller(fastchess_model, uci_format=True)
 
-    stack = []
-    while True:
-        if stack:
-            smove = stack.pop()
-        else: smove = input()
+        self.nps = 0
+        self.roll_kldiv = 1
+        self.tot_rolls = 0
 
-        if smove == 'quit':
-            break
-
-        elif smove == 'uci':
-            print('uciok')
-
-        elif smove == 'isready':
-            print('readyok')
-
-        elif smove == 'ucinewgame':
-            stack.append(f'position fen {chess.STARTING_FEN}')
-
-        elif smove.startswith('position'):
-            params = smove.split(' ', 2)
-            if params[1] == 'fen':
-                board = chess.Board(params[2])
-            elif params[1] == 'startpos':
-                board = chess.Board()
-                if len(params) > 2:
-                    params = params[2].split(' ')
-                    if params[0] == 'moves':
-                        for move in params[1:]:
-                            board.push(chess.Move.from_uci(move))
+    def parse(self, line):
+        cmd, arg = line.split(' ', 1) if ' ' in line else (line, '')
+        if cmd == 'uci':
+            self.uci()
+        elif cmd == 'debug':
+            self.debug(arg != 'off')
+        elif cmd == 'isready':
+            self.isready()
+        elif cmd == 'setoption':
+            i = arg.find('value')
+            if i >= 0:
+                name = arg[len('name '):i-1]
+                value = arg[i+len('value '):]
             else:
-                print(f'Did not understand position {params}')
-
-        elif smove.startswith('go'):
-            params = smove.split(' ')
-            params = dict(zip(*[iter(params[1:])]*2))
-            rolls = int(params.get('nodes', 0))
-            movetime = int(params.get('movetime', 0))/1000
-            wtime = int(params.get('wtime', 0))/1000
-            btime = int(params.get('btime', 0))/1000
-            movestogo = int(params.get('movestogo', 40))
-            print(params, '...')
-
-            if not movetime and wtime and btime:
-                if board.turn == chess.WHITE:
-                    movetime = wtime/(movestogo)
+                name = arg[len('name '):]
+            self.setoption(name, value)
+        elif cmd == 'ucinewgame':
+            self.ucinewgame()
+        elif cmd == 'position':
+            args = arg.split()
+            if args[0] == 'fen':
+                board = chess.Board(args[1])
+                moves = args[3:]
+            else:
+                assert args[0] == 'startpos'
+                board = chess.Board()
+                moves = args[2:]
+            self.position(board, map(chess.Move.from_uci, moves))
+        elif cmd == 'go':
+            args = arg.split()
+            params = {}
+            while args:
+                key, *args = args
+                if key == 'searchmoves':
+                    params['searchmoves'] = list(itertools.takewhile(
+                        (lambda x:x), map(uci_or_none, args[1:])))
+                    del args[:len(params['searchmoves'])]
+                elif key in ('ponder', 'infinite'):
+                    params[key] = True
                 else:
-                    movetime = btime/(movestogo)
+                    params[key] = int(args[0])
+                    del args[0]
+            self.go(**params)
+        elif cmd == 'stop':
+            self.stop()
+        elif cmd == 'ponderhit':
+            self.ponderhit()
+        else:
+            print(f'info string Ignoring command {cmd}')
 
-            print('going', movetime, wtime, btime)
+    def uci(self):
+        print(f'id name FastChess')
+        print(f'id author Thomas Dybdahl Ahle')
+        for name, op in self.option_types.items():
+            parts = [f'option name {name} type {type(op).__name__}']
+            if type(op) == Type_Spin:
+                parts.append(f'default {op.default} min {op.min} max {op.max}')
+            if type(op) == Type_Check:
+                parts.append(f'default {op.default}')
+            if type(op) == Type_Combo:
+                parts.append(f'default {op.default}')
+                for var in op.vars:
+                    parts.append(f'var {var}')
+            if type(op) == Type_Button:
+                pass
+            if type(op) == Type_String:
+                parts.append(f'default {op.default}')
+            print(' '.join(parts))
+        print('uciok')
 
-            move = model.find_move(board, rolls=rolls, movetime=movetime,
-                                   debug=False, temperature=args.rand)
-            print('bestmove', move)
+    def set_debug(self, debug=True):
+        self.debug = debug
 
-        elif smove.startswith('time'):
-            our_time = int(smove.split()[1])
+    def isready(self):
+        print('readyok')
 
-        elif smove.startswith('otim'):
-            opp_time = int(smove.split()[1])
+    def ucinewgame(self):
+        pass
 
-        #elif smove.startswith('wtime'):
-            #our_time = int(smove.split()[1])
+    def setoption(self, name, value=None):
+        self.option[name] = value
+        if name == 'MultiPV':
+            self.model.pvs = value
 
-        #elif smove.startswith('btime'):
-            #opp_time = int(smove.split()[1])
+    def position(self, board, moves):
+        self.board = board
+        for move in moves:
+            self.board.push(move)
+
+    def go(self, searchmoves=(), ponder=False, wtime=0, btime=0, winc=0, binc=0, movestogo=40, depth=0, nodes=0, mate=0, movetime=0, infinite=False):
+        """ See UCI documentation for what the options mean. """
+        if searchmoves or ponder or mate or depth:
+            print('info string Ignoring unsupported go options')
+
+        min_kldiv = max_time = max_rolls = 0
+
+        if movetime:
+            max_time = movetime/1000
+
+        elif nodes:
+            max_rolls = nodes
 
         else:
-            print(f'info string Ignoring command {smove}')
+            time_left = wtime/1000 if self.board.turn == chess.WHITE else btime/1000
+            inc = winc/1000 if self.board.turn == chess.WHITE else binc/1000
+            time_per_move = time_left/(movestogo+1) + inc
+
+            # If the opponent has a lot less time than us, we might as well use a bit more.
+            # This kinda assumes we played with the same timecontrol from the beginning.
+            opp_time_per_move = (wtime+btime)/1000/(movestogo+1) + (winc+binc)/1000 - time_per_move
+            if opp_time_per_move:
+                time_ratio = time_per_move/opp_time_per_move
+                print(f'info string time ratio {time_ratio:.3}')
+                time_per_move *= time_ratio**.5
+                print(f'info string time per move {time_per_move:.1f}')
+
+            # Try to convert time_per_move into a number of rolls
+            if self.tot_rolls == 0:
+                max_time = time_per_move
+                min_kldiv = 0
+            else:
+                # We allow a fair bit of extra time to try and allow the kl_div
+                # mechanism to really work.
+                max_time = 2*time_per_move
+                mean_rolls = self.nps * time_per_move
+                min_kldiv = 1/mean_rolls
+
+        # See that some kind of condition has been set
+        if not infinite and not (max_time or min_kldiv or max_rolls):
+            print('info string Need more time to move')
+
+        temp = 100/self.options['Temperature']
+        node, stats = self.model.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time, debug=self.debug, temperature=temp, pvs=self.options['MultiPV'])
+
+        # Conservative discounting using the harmonic mean
+        if self.nps:
+            self.nps = 1/(.5/self.nps + .5/(stats.rolls / stats.elapsed))
+        else:
+            self.nps = stats.rolls / stats.elapsed
+
+        # Don't use discounting when guessing the constant C such that kl_div = C/rolls.
+        self.roll_kldiv = (stats.kl_div * stats.rolls + self.roll_kldiv * self.tot_rolls)/(self.tot_rolls + stats.rolls)
+        self.tot_rolls += stats.rolls
+
+        parts = ['bestmove', node.move.uci()]
+
+        if node.children:
+            ponder_node = max(node.children, key=lambda n:n.N)
+            parts += ['ponder', ponder_node.move.uci()]
+
+        print(' '.join(parts))
+
+    def stop(self):
+        self.model.stop()
+
+    def ponderhit(self):
+        pass
+
+
+def main():
+    args = parser.parse_args()
+    uci = UCI(args)
+    while True:
+        cmd = input()
+        print(cmd, file=sys.stderr)
+        if cmd == 'quit':
+            break
+        uci.parse(cmd)
+
 
 if __name__ == '__main__':
     main()
