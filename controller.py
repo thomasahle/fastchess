@@ -2,6 +2,7 @@ from collections import namedtuple
 import time
 import numpy as np
 import random
+import math
 
 import mcts
 
@@ -14,24 +15,35 @@ class MCTS_Controller:
         self.uci_format = uci_format
         self.should_stop = False
 
-    def print_pvs(self, pvs):
-        """ print `pvs` pvs starting from root """
+    def calc_pvs(self, pvs, min_visits=1):
+        """ Yields the top `pvs` principle variations as list of strings.
+            The pvs are trimmed to only contain nodes with at least `min_visits` visits. """
         root = self.node
+        root_children = sorted(root.children, key=lambda n: -n.N)
         for i in range(pvs):
             pv = []
             node = root
             while node.children:
                 if node == root:
-                    node = sorted(node.children, key=lambda n: -n.N)[i]
-                    san = node.parent_board.san(node.move)
-                    san += f' {node.N/root.N:.1%} ({float(-node.Q):.2})'
+                    node = root_children[i]
                 else:
                     node = max(node.children, key=lambda n: n.N)
-                    san = node.parent_board.san(node.move)
+                if node.N < min_visits:
+                    break
+
                 if self.uci_format:
                     san = node.move.uci()
-                pv.append(san)
+                else:
+                    san = node.parent_board.san(node.move)
+                    if node == root_children[i]:
+                        san += f' {node.N/root.N:.1%} ({float(-node.Q):.2})'
 
+                pv.append(san)
+            yield pv
+
+    def print_pvs(self, pvs):
+        """ print `pvs` pvs starting from root """
+        for i, pv in enumerate(self.calc_pvs(pvs)):
             if self.uci_format:
                 print(f'multipv {i+1}', ' '.join(pv))
             else:
@@ -58,7 +70,10 @@ class MCTS_Controller:
             self.old_time = new_time
             t = new_time - self.start_time
             if self.uci_format:
-                print(f'info score {self.node.Q} time {t} nodes {self.node.N}')
+                # Denormalize score
+                score = math.tan(2*math.pi*self.node.Q)*100
+                pv = ' '.join(next(self.calc_pvs(1, min_visits=100)))
+                print(f'info depth {len(pv)} score cp {score:.0f} time {t*1000:.0f} nodes {self.node.N} nps {nps:.0f} pv {pv}')
             else:
                 print(f'KL: {kl_div:.3} rolls: {self.node.N}'
                       f' nps: {nps:.0f} t: {t:.1f}s')

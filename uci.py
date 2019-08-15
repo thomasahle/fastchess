@@ -38,15 +38,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('model_path', help='Location of fasttext model to use')
 parser.add_argument('-occ', action='store_true', help='Add -Occ features')
 parser.add_argument('-debug', action='store_true', help='Set debug initially')
-parser.add_argument('-rand', nargs='?', metavar='TEMP', const=1, default=0, type=float, help='Play random moves from the posterior distribution to the 1/temp power.')
 
 class UCI:
     def __init__(self, args):
         self.debug = args.debug
         self.board = chess.Board()
         self.option_types = {
-            # Play random moves from the posterior distribution to the 100/temp power.
-            'Temperature': Type_Spin(default=100, min=0, max=10000),
+            # Play random moves from the posterior distribution to the temp/100 power.
+            'Temperature': Type_Spin(default=0, min=0, max=100),
             'MultiPV': Type_Spin(default=0, min=0, max=10)
         }
         self.options = {key: val.default for key, val in self.option_types.items()
@@ -80,8 +79,8 @@ class UCI:
         elif cmd == 'position':
             args = arg.split()
             if args[0] == 'fen':
-                board = chess.Board(args[1])
-                moves = args[3:]
+                board = chess.Board(' '.join(args[1:7]))
+                moves = args[8:]
             else:
                 assert args[0] == 'startpos'
                 board = chess.Board()
@@ -170,7 +169,7 @@ class UCI:
             # This kinda assumes we played with the same timecontrol from the beginning.
             opp_time_per_move = (wtime+btime)/1000/(movestogo+1) + (winc+binc)/1000 - time_per_move
             if opp_time_per_move:
-                time_ratio = time_per_move/opp_time_per_move
+                time_ratio = (time_per_move+1)/(opp_time_per_move+1)
                 print(f'info string time ratio {time_ratio:.3}')
                 time_per_move *= time_ratio**.5
                 print(f'info string time per move {time_per_move:.1f}')
@@ -182,7 +181,7 @@ class UCI:
             else:
                 # We allow a fair bit of extra time to try and allow the kl_div
                 # mechanism to really work.
-                max_time = 2*time_per_move
+                max_time = min(2*time_per_move, time_left/2)
                 mean_rolls = self.nps * time_per_move
                 min_kldiv = 1/mean_rolls
 
@@ -190,7 +189,7 @@ class UCI:
         if not infinite and not (max_time or min_kldiv or max_rolls):
             print('info string Need more time to move')
 
-        temp = 100/self.options['Temperature']
+        temp = self.options['Temperature']/100
         node, stats = self.model.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time, debug=self.debug, temperature=temp, pvs=self.options['MultiPV'])
 
         # Conservative discounting using the harmonic mean
@@ -200,8 +199,9 @@ class UCI:
             self.nps = stats.rolls / stats.elapsed
 
         # Don't use discounting when guessing the constant C such that kl_div = C/rolls.
-        self.roll_kldiv = (stats.kl_div * stats.rolls + self.roll_kldiv * self.tot_rolls)/(self.tot_rolls + stats.rolls)
+        self.roll_kldiv = (stats.kl_div * stats.rolls**2 + self.roll_kldiv * self.tot_rolls)/(self.tot_rolls + stats.rolls)
         self.tot_rolls += stats.rolls
+        print('string info roll_kldiv', self.roll_kldiv, 'rolls', stats.rolls, 'kl_div', stats.kl_div, 'tot', self.tot_rolls)
 
         parts = ['bestmove', node.move.uci()]
 
@@ -223,7 +223,7 @@ def main():
     uci = UCI(args)
     while True:
         cmd = input()
-        print(cmd, file=sys.stderr)
+        print('stderr', cmd, file=sys.stderr)
         if cmd == 'quit':
             break
         uci.parse(cmd)
