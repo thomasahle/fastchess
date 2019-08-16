@@ -6,11 +6,14 @@ import math
 
 import mcts
 
+STAT_INTERVAL = 100
+MIN_PV_VISITS = 100
+
 Stats = namedtuple('Stats', ['kl_div', 'rolls', 'elapsed'])
 
 class MCTS_Controller:
-    def __init__(self, fasttext_model, uci_format=False):
-        self.model = mcts.Model(fasttext_model)
+    def __init__(self, fasttext_model, uci_format=False, use_cache=False, policy_softmax_temp=1, formula=0):
+        self.model = mcts.Model(fasttext_model, use_cache=use_cache, policy_softmax_temp=policy_softmax_temp, formula=0)
         self.node = None
         self.uci_format = uci_format
         self.should_stop = False
@@ -66,16 +69,16 @@ class MCTS_Controller:
             kl_div = np.sum(dist * np.log(dist / self.old_dist))
             self.old_dist = dist
             new_time = time.time()
-            nps = 100 / (new_time - self.old_time)
+            nps = STAT_INTERVAL / (new_time - self.old_time)
             self.old_time = new_time
             t = new_time - self.start_time
             if self.uci_format:
                 # Denormalize score
                 score = math.tan(2*math.pi*self.node.Q)*100
-                pv = ' '.join(next(self.calc_pvs(1, min_visits=100)))
-                print(f'info depth {len(pv)} score cp {score:.0f} time {t*1000:.0f} nodes {self.node.N} nps {nps:.0f} pv {pv}')
+                pv = next(self.calc_pvs(1, min_visits=MIN_PV_VISITS))
+                print(f'info depth {len(pv)} score cp {score:.0f} time {t*1000:.0f} nodes {self.node.N} nps {nps:.0f} pv {" ".join(pv)}')
             else:
-                print(f'KL: {kl_div:.3} rolls: {self.node.N}'
+                print(f'KL: {-math.log(kl_div):.1f} rolls: {self.node.N}'
                       f' nps: {nps:.0f} t: {t:.1f}s')
             return kl_div
 
@@ -117,7 +120,7 @@ class MCTS_Controller:
         while True:
             rolls += 1
             self.node.rollout()
-            if self.node.N % 100 == 0:
+            if self.node.N % STAT_INTERVAL == 0:
                 # Remove old PVs and stats lines
                 real_pvs = min(pvs, len(self.node.children))
                 if not first and not self.uci_format:

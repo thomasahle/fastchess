@@ -39,6 +39,8 @@ parser.add_argument('model_path', help='Location of fasttext model to use')
 parser.add_argument('-occ', action='store_true', help='Add -Occ features')
 parser.add_argument('-debug', action='store_true', help='Set debug initially')
 
+sys.stderr = open('log', 'a')
+
 class UCI:
     def __init__(self, args):
         self.debug = args.debug
@@ -46,13 +48,21 @@ class UCI:
         self.option_types = {
             # Play random moves from the posterior distribution to the temp/100 power.
             'Temperature': Type_Spin(default=0, min=0, max=100),
-            'MultiPV': Type_Spin(default=0, min=0, max=10)
+            'MultiPV': Type_Spin(default=0, min=0, max=10),
+            'MilliCPUCT': Type_Spin(default=2000, min=0, max=1000000),
+            'Cache': Type_Check(default=True),
+            'PolicySoftmaxTemp': Type_Spin(default=100, min=1, max=10000),
+            'UFormula': Type_Spin(default=0, min=0, max=4),
+            # TODO: Leela has many interesting options that we may consider, like
+            # fpu-value (We use -.99), fpu-at-root (they use 1), policy-softmax-temp
+            # (somebody said 2.2 is a good value)
+            # See https://github.com/LeelaChessZero/lc0/wiki/Lc0-options for more
         }
         self.options = {key: val.default for key, val in self.option_types.items()
                         if hasattr(val, 'default')}
 
-        fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
-        self.model = MCTS_Controller(fastchess_model, uci_format=True)
+        self.fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
+        self.model = MCTS_Controller(self.fastchess_model, uci_format=True)
 
         self.nps = 0
         self.roll_kldiv = 1
@@ -73,6 +83,11 @@ class UCI:
                 value = arg[i+len('value '):]
             else:
                 name = arg[len('name '):]
+            opt = self.option_types.get(name)
+            if not opt:
+                print(f'Did not understand option "{cmd}"', file=sys.stderr)
+            elif type(opt) == Type_Spin: value = int(value)
+            elif type(opt) == Type_Check: value = (value == 'true')
             self.setoption(name, value)
         elif cmd == 'ucinewgame':
             self.ucinewgame()
@@ -138,9 +153,12 @@ class UCI:
         pass
 
     def setoption(self, name, value=None):
-        self.option[name] = value
-        if name == 'MultiPV':
-            self.model.pvs = value
+        self.options[name] = value
+        self.model = MCTS_Controller(self.fastchess_model, uci_format=True,
+                use_cache=self.options['Cache'],
+                policy_softmax_temp=self.options['PolicySoftmaxTemp']/100,
+                formula=self.options['UFormula'])
+        self.model.cpuct = self.options['MilliCPUCT']/1000
 
     def position(self, board, moves):
         self.board = board
@@ -190,7 +208,8 @@ class UCI:
             print('info string Need more time to move')
 
         temp = self.options['Temperature']/100
-        node, stats = self.model.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time, debug=self.debug, temperature=temp, pvs=self.options['MultiPV'])
+        node, stats = self.model.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls,
+                max_time=max_time, debug=self.debug, temperature=temp, pvs=self.options['MultiPV'])
 
         # Conservative discounting using the harmonic mean
         if self.nps:
@@ -201,7 +220,7 @@ class UCI:
         # Don't use discounting when guessing the constant C such that kl_div = C/rolls.
         self.roll_kldiv = (stats.kl_div * stats.rolls**2 + self.roll_kldiv * self.tot_rolls)/(self.tot_rolls + stats.rolls)
         self.tot_rolls += stats.rolls
-        print('string info roll_kldiv', self.roll_kldiv, 'rolls', stats.rolls, 'kl_div', stats.kl_div, 'tot', self.tot_rolls)
+        print(f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls} kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
 
         parts = ['bestmove', node.move.uci()]
 

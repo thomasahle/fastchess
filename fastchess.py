@@ -20,6 +20,15 @@ def board_to_words(board, occ=False):
         for square in chess.scan_forward(board.occupied):
             yield f'{chess.SQUARE_NAMES[square]}-Occ'
 
+# TODO: Consider the following code used by python-chess to compue transposition-keys.
+#       Should we use something similar to compress board_to_words?
+# def _transposition_key(self) -> Hashable:
+#     return (self.pawns, self.knights, self.bishops, self.rooks,
+#             self.queens, self.kings,
+#             self.occupied_co[WHITE], self.occupied_co[BLACK],
+#             self.turn, self.clean_castling_rights(),
+#             self.ep_square if self.has_legal_en_passant() else None)
+
 
 def mirror_move(move):
     return chess.Move(chess.square_mirror(move.from_square),

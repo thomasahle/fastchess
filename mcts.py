@@ -6,13 +6,14 @@ import random
 import fastchess
 import pst
 
-
-CPUCT = 2
-
-
 class Model:
-    def __init__(self, fasttext_model):
+    def __init__(self, fasttext_model, use_cache=False, policy_softmax_temp=1, formula=0):
         self.fc = fasttext_model
+        self.cpuct = 2
+        self.cache = {}
+        self.use_cache = use_cache
+        self.policy_softmax_temp = policy_softmax_temp
+        self.formula = formula
 
     def eval(self, board, debug=False):
         """ Returns a single score relative to board.turn """
@@ -41,6 +42,11 @@ class Model:
 
     def predict(self, board, n=40, debug=False):
         """ Returns list of `n` (prob, move) legal pairs """
+        if self.use_cache:
+            key = board._transposition_key()
+            cached = self.cache.get(key)
+            if cached:
+                return cached
         pre = {m: p for p, m in self.fc.find_moves(
             board, n, debug=debug, flipped=False)}
         res = []
@@ -52,10 +58,13 @@ class Model:
             board.pop()
             # Hack: We make sure that checks and captures are always included,
             # and that no move has a completely non-existent prior.
-            p = max(pre.get(m, 0), .01, .1 * int(chk or cap))
+            p = max(pre.get(m, 0)**1/self.policy_softmax_temp, .01, .1 * int(chk or cap))
             res.append((p, m))
         psum = sum(p for p, _ in res)
-        return [(p / psum, m) for p, m in res]
+        res = [(p / psum, m) for p, m in res]
+        if self.use_cache:
+            self.cache[key] = res
+        return res
 
 
 class Node:
@@ -85,6 +94,25 @@ class Node:
         for i in range(rolls):
             self.rollout()
         return max(self.children, key=lambda n: n.N).move
+
+    def ucb(self, n):
+        # https://colab.research.google.com/drive/14v45o1xbfrBz0sG3mHbqFtYz_IrQHLTg#scrollTo=1VeRCpCSaHe3
+        ratio = n.P * self.N / (1 + n.N)
+        # AZ
+        if self.formula == 0:
+            return -n.Q + ratio * (math.log((self.N + 19652 + 1)/19652) + 1.25) / self.N**.5
+        # LZ old
+        if self.formula == 1:
+            return -n.Q + ratio * 0.8 / self.N**.5
+        # Old
+        if self.formula == 2:
+            return -n.Q + ratio * 3 / self.N**.5
+        # LZ new
+        if self.formula == 3:
+            return -n.Q + ratio * ((.5 * math.log(.015 * self.N + 1.7)) / self.N)**.5
+        # UCB
+        if self.formula == 4:
+            return -n.Q + ratio * (2*math.log(self.N) / (n.N + 1))**.5
 
     def rollout(self):
         """ Returns the leaf value relative to the current player of the node. """
@@ -122,9 +150,10 @@ class Node:
         # TODO: Even now, this is still pretty slow
         # _, node = max((-n.Q + CPUCT * n.P * sqrtN / (1 + n.N), n) for n in self.children)
         # is better, but it fails when two nodes have the same score...
-        sqrtN = self.N**.5
-        node = max(self.children,
-                   key=lambda n: -n.Q + CPUCT * n.P * sqrtN / (1 + n.N))
+        #sqrtN = self.N**.5
+        #node = max(self.children,
+                   #key=lambda n: -n.Q + self.model.cpuct * n.P * sqrtN / (1 + n.N))
+        node = max(self.children, key=self.ucb)
 
         # Visit it
         s = -node.rollout()
@@ -135,3 +164,4 @@ class Node:
         self.Q = ((self.N - 1) * self.Q + s) / self.N
         # Propagate the value further up the tree
         return s
+

@@ -25,6 +25,7 @@ parser.add_argument(
 parser.add_argument('-fen', help='Start from given position',
                     default='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
 parser.add_argument('-occ', action='store_true', help='Add -Occ features')
+parser.add_argument('-cache', action='store_true', help='Cache outputs from fasttext')
 parser.add_argument('-profile', action='store_true',
                     help='Run profiling. (Only with selfplay)')
 
@@ -112,7 +113,7 @@ def main():
     if args.debug:
         print('Loading model...')
     fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
-    model = MCTS_Controller(fastchess_model)
+    model = MCTS_Controller(fastchess_model, use_cache=args.cache)
     board = chess.Board(args.fen)
 
     try:
