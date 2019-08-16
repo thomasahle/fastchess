@@ -12,8 +12,8 @@ MIN_PV_VISITS = 100
 Stats = namedtuple('Stats', ['kl_div', 'rolls', 'elapsed'])
 
 class MCTS_Controller:
-    def __init__(self, fasttext_model, uci_format=False, use_cache=False, policy_softmax_temp=1, formula=0):
-        self.model = mcts.Model(fasttext_model, use_cache=use_cache, policy_softmax_temp=policy_softmax_temp, formula=0)
+    def __init__(self, fasttext_model, uci_format=False, use_cache=False, policy_softmax_temp=1, formula=2):
+        self.model = mcts.Model(fasttext_model, use_cache=use_cache, policy_softmax_temp=policy_softmax_temp, formula=formula)
         self.node = None
         self.uci_format = uci_format
         self.should_stop = False

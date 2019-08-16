@@ -99,19 +99,19 @@ class Node:
         # https://colab.research.google.com/drive/14v45o1xbfrBz0sG3mHbqFtYz_IrQHLTg#scrollTo=1VeRCpCSaHe3
         ratio = n.P * self.N / (1 + n.N)
         # AZ
-        if self.formula == 0:
+        if self.model.formula == 0:
             return -n.Q + ratio * (math.log((self.N + 19652 + 1)/19652) + 1.25) / self.N**.5
         # LZ old
-        if self.formula == 1:
+        if self.model.formula == 1:
             return -n.Q + ratio * 0.8 / self.N**.5
         # Old
-        if self.formula == 2:
+        if self.model.formula == 2:
             return -n.Q + ratio * 3 / self.N**.5
         # LZ new
-        if self.formula == 3:
+        if self.model.formula == 3:
             return -n.Q + ratio * ((.5 * math.log(.015 * self.N + 1.7)) / self.N)**.5
         # UCB
-        if self.formula == 4:
+        if self.model.formula == 4:
             return -n.Q + ratio * (2*math.log(self.N) / (n.N + 1))**.5
 
     def rollout(self):
