@@ -7,6 +7,47 @@ from collections import defaultdict
 import numpy as np
 import pst
 
+
+def win_to_cp(win):
+    return math.tan(win * math.pi / 2) * 100
+
+
+def cp_to_win(cp):
+    return math.atan(cp / 100) * 2 / math.pi
+
+
+def board_to_words(board, occ=False):
+    for s, p in board.piece_map().items():
+        yield f'{chess.SQUARE_NAMES[s]}{p.symbol()}'
+    if board.castling_rights & chess.BB_H1:
+        yield 'H1-C'
+    if board.castling_rights & chess.BB_H8:
+        yield 'H8-C'
+    if board.castling_rights & chess.BB_A1:
+        yield 'A1-C'
+    if board.castling_rights & chess.BB_A8:
+        yield 'A8-C'
+    if occ:
+        for square in chess.scan_forward(board.occupied):
+            yield f'{chess.SQUARE_NAMES[square]}-Occ'
+
+
+def mirror_move(move):
+    return chess.Move(chess.square_mirror(move.from_square),
+                      chess.square_mirror(move.to_square),
+                      move.promotion)
+
+
+def prepare_example(board, move, occ=False):
+    if board.turn == chess.WHITE:
+        string = ' '.join(board_to_words(board, occ=occ))
+        uci_move = move.uci()
+    else:
+        string = ' '.join(board_to_words(board.mirror(), occ=occ))
+        uci_move = mirror_move(move).uci()
+    return f'{string} __label__{uci_move}'
+
+
 EVAL_INDEX = 0
 COUNT_INDEX = 1
 
@@ -223,43 +264,3 @@ class Model:
         scores = np.exp(scores - np.max(scores))
         scores /= np.sum(scores)
         return zip(scores, moves)
-
-
-def win_to_cp(win):
-    return math.tan(win * math.pi / 2) * 100
-
-
-def cp_to_win(cp):
-    return math.atan(cp / 100) * 2 / math.pi
-
-
-def board_to_words(board, occ=False):
-    for s, p in board.piece_map().items():
-        yield f'{chess.SQUARE_NAMES[s]}{p.symbol()}'
-    if board.castling_rights & chess.BB_H1:
-        yield 'H1-C'
-    if board.castling_rights & chess.BB_H8:
-        yield 'H8-C'
-    if board.castling_rights & chess.BB_A1:
-        yield 'A1-C'
-    if board.castling_rights & chess.BB_A8:
-        yield 'A8-C'
-    if occ:
-        for square in chess.scan_forward(board.occupied):
-            yield f'{chess.SQUARE_NAMES[square]}-Occ'
-
-
-def mirror_move(move):
-    return chess.Move(chess.square_mirror(move.from_square),
-                      chess.square_mirror(move.to_square),
-                      move.promotion)
-
-
-def prepare_example(board, move, occ=False):
-    if board.turn == chess.WHITE:
-        string = ' '.join(board_to_words(board, occ=occ))
-        uci_move = move.uci()
-    else:
-        string = ' '.join(board_to_words(board.mirror(), occ=occ))
-        uci_move = mirror_move(move).uci()
-    return f'{string} __label__{uci_move}'
