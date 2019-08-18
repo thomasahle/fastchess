@@ -11,8 +11,12 @@ import fastchess
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('conf', help='Location of engines.json file to use')
-parser.add_argument('name', help='Name of engine to use')
+parser.add_argument(
+    'conf',
+    default='',
+    nargs='?',
+    help='Location of engines.json file to use')
+parser.add_argument('name', default='fastchess', nargs='?', help='Name of engine to use')
 parser.add_argument('-selfplay', action='store_true', help='Play against itself')
 parser.add_argument('-debug', action='store_true', help='Enable debugging of engine')
 parser.add_argument('-movetime', type=int, default=0, help='Movetime in ms')
@@ -176,7 +180,16 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False):
 
 async def main():
     args = parser.parse_args()
-    conf = json.load(open(args.conf))
+
+    if not args.conf:
+        path = pathlib.Path(__file__).parent / 'engines.json'
+        if not path.is_file():
+            print('Unable to locate engines.json file.')
+            return
+        conf = json.load(open(str(path)))
+    else:
+        conf = json.load(open(args.conf))
+
     engine = await load_engine(conf, args.name, debug=args.debug)
     board = chess.Board(args.fen)
 
