@@ -1,33 +1,43 @@
-import chess
-import re
-import fastchess
+import chess.engine
+import json
 import argparse
 import random
 import time
-import mcts
-import numpy as np
-import time
-from controller import MCTS_Controller
+import sys
+import asyncio
+import pathlib
+
+import fastchess
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('model_path', help='Location of fasttext model to use')
-parser.add_argument('-selfplay', action='store_true',
-                    help='Play against itself')
-parser.add_argument('-rand', nargs='?', help='Play random moves from the posterior distribution to the 1/temp power.',
-                    metavar='TEMP', const=1, default=0, type=float)
-parser.add_argument('-debug', action='store_true',
-                    help='Print all predicted labels')
-parser.add_argument('-mcts', nargs='?', help='Play stronger (hopefully)',
-                    metavar='ROLLS', const=800, default=1, type=int)
+parser.add_argument('conf', help='Location of engines.json file to use')
+parser.add_argument('name', help='Name of engine to use')
+parser.add_argument('-selfplay', action='store_true', help='Play against itself')
+parser.add_argument('-debug', action='store_true', help='Enable debugging of engine')
+parser.add_argument('-movetime', type=int, default=1000, help='Movetime in ms')
 parser.add_argument(
     '-pvs', nargs='?', help='Show Principal Variations (when mcts)', const=3, default=0, type=int)
 parser.add_argument('-fen', help='Start from given position',
                     default='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
-parser.add_argument('-occ', action='store_true', help='Add -Occ features')
-parser.add_argument('-cache', action='store_true', help='Cache outputs from fasttext')
-parser.add_argument('-profile', action='store_true',
-                    help='Run profiling. (Only with selfplay)')
+
+
+async def load_engine(engine_args, name, debug=False):
+    args = next(a for a in engine_args if a['name'] == name)
+    curdir = str(pathlib.Path(__file__).parent)
+    popen_args = {}
+    if 'workingDirectory' in args:
+        popen_args['cwd'] = args['workingDirectory'].replace('$FILE', curdir)
+    cmd = args['command'].split()
+    if cmd[0] == '$PYTHON':
+        cmd[0] = sys.executable
+    if args['protocol'] == 'uci':
+        _, engine = await chess.engine.popen_uci(cmd, **popen_args)
+    elif args['protocol'] == 'xboard':
+        _, engine = await chess.engine.popen_xboard(cmd, **popen_args)
+    engine.debug(debug)
+    await engine.configure({opt['name']: opt['value'] for opt in args.get('options',[])})
+    return engine
 
 
 def get_user_move(board):
@@ -60,9 +70,6 @@ def get_user_color():
 
 def print_unicode_board(board, perspective=chess.WHITE):
     """ Prints the position from a given perspective. """
-    uni_pieces = {
-        'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚', 'p': '♟',
-        'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔', 'P': '♙'}
     sc, ec = '\x1b[0;30;107m', '\x1b[0m'
     for r in range(8) if perspective == chess.BLACK else range(7, -1, -1):
         line = [f'{sc} {r+1}']
@@ -74,18 +81,62 @@ def print_unicode_board(board, perspective=chess.WHITE):
                 elif board.move_stack[-1].from_square == 8 * r + c:
                     color = '\x1b[48;5;153m'
             piece = board.piece_at(8 * r + c)
-            if piece:
-                line.append(color + uni_pieces[piece.symbol()])
-            else:
-                line.append(color + ' ')
+            line.append(color + (chess.UNICODE_PIECE_SYMBOLS[piece.symbol()] if piece else ' '))
         print(' ' + ' '.join(line) + f' {sc} {ec}')
     if perspective == chess.WHITE:
         print(f' {sc}   a b c d e f g h  {ec}\n')
     else:
         print(f' {sc}   h g f e d c b a  {ec}\n')
 
+async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
+    multipv = min(multipv, board.legal_moves.count())
+    print('\n'*(multipv+1), end='')
 
-def play(model, rolls, rand=0, debug=False, board=None, pvs=0, selfplay=False):
+    with await engine.analysis(board, limit, game=game_id,
+            info=chess.engine.INFO_ALL, multipv=max(1,multipv)) as analysis:
+
+        infos = [None for _ in range(multipv)]
+        async for new_info in analysis:
+            # If multipv = 0 it means we don't want them at all,
+            # but uci requires MultiPV to be at least 1.
+            if multipv and 'multipv' in new_info:
+                infos[new_info['multipv']-1] = new_info
+
+            # Parse optional arguments into a dict
+            if debug and 'string' in new_info:
+                print(new_info['string'])
+
+            if not debug and all(infos) and 'score' in analysis.info:
+                print(f"\u001b[1A\u001b[K" * (multipv+1), end='')
+
+                info = analysis.info
+                score = info['score'].relative
+                score = f'Score: {score.score()}' if score.score() else f'Mate in {score.mate()}'
+                print(f'{score}, nodes: {info["nodes"]}, nps: {info["nps"]}, time: {float(info["time"]):.1f}', end='')
+                print()
+
+                for info in infos:
+                    variation = board.variation_san(info['pv'][:10])
+
+                    if 'score' in info:
+                        score = info['score'].relative
+                        score = fastchess.cp_to_win(score.score()) if score.score() is not None else score.mate()
+                        key, *val = info.get('string', '').split()
+                        if key == 'pv_nodes':
+                            nodes = int(val[0])
+                            rel = nodes/analysis.info['nodes']
+                            score_rel = f'({score:.2f}, {rel*100:.0f}%)'
+                        else:
+                            score_rel = f'({score:.2f})'
+                    else:
+                        score_rel = ''
+
+                    # Something about N
+                    print(f'{info["multipv"]}: {score_rel} {variation}')
+
+        return analysis.info['pv'][0]
+
+async def play(engine, board, selfplay, pvs, movetime, debug=False):
     if not selfplay:
         user_color = get_user_color()
     else: user_color = chess.WHITE
@@ -93,13 +144,20 @@ def play(model, rolls, rand=0, debug=False, board=None, pvs=0, selfplay=False):
     if not board:
         board = chess.Board()
 
+    game_id = random.random()
+
+    # TODO: Handle limits
+    limit = chess.engine.Limit(time=movetime)
+
+    # engine.configure
+    # with options
+
     while not board.is_game_over():
         print_unicode_board(board, perspective=user_color)
         if not selfplay and user_color == board.turn:
             move = get_user_move(board)
         else:
-            node, stats = model.find_move(board, min_kldiv=1/rolls, debug=debug, temperature=rand, pvs=pvs)
-            move = node.move
+            move = await get_engine_move(engine, board, limit, game_id, pvs, debug=debug)
             print(f' My move: {board.san(move)}')
         board.push(move)
 
@@ -108,29 +166,20 @@ def play(model, rolls, rand=0, debug=False, board=None, pvs=0, selfplay=False):
     print('Result:', board.result())
 
 
-def main():
+async def main():
     args = parser.parse_args()
-    if args.debug:
-        print('Loading model...')
-    fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
-    model = MCTS_Controller(fastchess_model, use_cache=args.cache)
+    conf = json.load(open(args.conf))
+    engine = await load_engine(conf, args.name, debug=args.debug)
     board = chess.Board(args.fen)
 
     try:
-        if args.selfplay:
-            if args.profile:
-                import cProfile as profile
-                profile.runctx(
-                    'play(model, rolls=args.mcts, rand=args.rand, debug=args.debug, board=board, pvs=args.pvs, selfplay=True)', globals(), locals())
-            else:
-                play(model, rolls=args.mcts, rand=args.rand, debug=args.debug, board=board, pvs=args.pvs, selfplay=True)
-        else:
-            play(model, rolls=args.mcts, rand=args.rand, debug=args.debug, board=board, pvs=args.pvs)
+        await play(engine, board, selfplay=args.selfplay, pvs=args.pvs, movetime=args.movetime/1000, debug=args.debug)
     except KeyboardInterrupt:
         pass
     finally:
         print('\nGoodbye!')
+        await engine.quit()
 
 
-if __name__ == '__main__':
-    main()
+asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
+asyncio.run(main())

@@ -17,17 +17,14 @@ class Unbuffered(object):
         self.stream = stream
     def write(self, data):
         self.stream.write(data)
+        sys.stderr.write(data)
         self.stream.flush()
     def __getattr__(self, attr):
         return getattr(self.stream, attr)
 sys.stdout = Unbuffered(sys.stdout)
 
-def uci_or_none(string):
-    try:
-        return chess.Move.from_uci(string)
-    except ValueError:
-        return None
 
+# There is also chess.engine.Option
 Type_Spin = namedtuple('spin', ['default', 'min', 'max'])
 Type_String = namedtuple('string', ['default'])
 Type_Check = namedtuple('check', ['default'])
@@ -37,13 +34,26 @@ Type_Combo = namedtuple('combo', ['default', 'vars'])
 parser = argparse.ArgumentParser()
 parser.add_argument('model_path', help='Location of fasttext model to use')
 parser.add_argument('-occ', action='store_true', help='Add -Occ features')
-parser.add_argument('-debug', action='store_true', help='Set debug initially')
+
+# Migrated from play_chess
+#parser.add_argument('-rand', nargs='?', help='Play random moves from the posterior distribution to the 1/temp power.',
+                    #metavar='TEMP', const=1, default=0, type=float)
+#parser.add_argument('-debug', action='store_true',
+                    #help='Print all predicted labels')
+#parser.add_argument('-mcts', nargs='?', help='Play stronger (hopefully)',
+                    #metavar='ROLLS', const=800, default=1, type=int)
+#parser.add_argument('-occ', action='store_true', help='Add -Occ features')
+#parser.add_argument('-cache', action='store_true', help='Cache outputs from fasttext')
+#parser.add_argument('-profile', action='store_true',
+                    #help='Run profiling. (Only with selfplay)')
+
+
 
 sys.stderr = open('log', 'a')
 
 class UCI:
     def __init__(self, args):
-        self.debug = args.debug
+        self.debug = False
         self.board = chess.Board()
         self.option_types = {
             # Play random moves from the posterior distribution to the temp/100 power.
@@ -61,8 +71,12 @@ class UCI:
         self.options = {key: val.default for key, val in self.option_types.items()
                         if hasattr(val, 'default')}
 
-        self.fastchess_model = fastchess.Model(args.model_path, occ=args.occ)
-        self.model = MCTS_Controller(self.fastchess_model, uci_format=True)
+        self.fastchess_model = fastchess.Model(args.model_path)
+        self.setoption(None, None)
+        self.controller = MCTS_Controller(args=mcts.Args(
+                model=self.fastchess_model,
+                debug=self.debug,
+                cpuct=3))
 
         self.nps = 0
         self.roll_kldiv = 1
@@ -73,7 +87,7 @@ class UCI:
         if cmd == 'uci':
             self.uci()
         elif cmd == 'debug':
-            self.debug(arg != 'off')
+            self.set_debug(arg != 'off')
         elif cmd == 'isready':
             self.isready()
         elif cmd == 'setoption':
@@ -107,6 +121,9 @@ class UCI:
             while args:
                 key, *args = args
                 if key == 'searchmoves':
+                    def uci_or_none(string):
+                        try: return chess.Move.from_uci(string)
+                        except ValueError: return None
                     params['searchmoves'] = list(itertools.takewhile(
                         (lambda x:x), map(uci_or_none, args[1:])))
                     del args[:len(params['searchmoves'])]
@@ -154,11 +171,10 @@ class UCI:
 
     def setoption(self, name, value=None):
         self.options[name] = value
-        self.model = MCTS_Controller(self.fastchess_model, uci_format=True,
-                use_cache=self.options['Cache'],
-                policy_softmax_temp=self.options['PolicySoftmaxTemp']/100,
-                formula=self.options['UFormula'])
-        self.model.cpuct = self.options['MilliCPUCT']/1000
+        self.controller = MCTS_Controller(args=mcts.Args(
+                model=self.fastchess_model,
+                debug=self.debug,
+                cpuct=self.options['MilliCPUCT']/1000))
 
     def position(self, board, moves):
         self.board = board
@@ -208,8 +224,7 @@ class UCI:
             print('info string Need more time to move')
 
         temp = self.options['Temperature']/100
-        node, stats = self.model.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls,
-                max_time=max_time, debug=self.debug, temperature=temp, pvs=self.options['MultiPV'])
+        node, stats = self.controller.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time, temperature=temp, pvs=self.options['MultiPV'])
 
         # Conservative discounting using the harmonic mean
         if self.nps:
@@ -222,6 +237,9 @@ class UCI:
         self.tot_rolls += stats.rolls
         print(f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls} kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
 
+        # Hack to ensure we can always get the bestmove from python-chess
+        print(f'info pv {node.move.uci()}')
+
         parts = ['bestmove', node.move.uci()]
 
         if node.children:
@@ -231,7 +249,7 @@ class UCI:
         print(' '.join(parts))
 
     def stop(self):
-        self.model.stop()
+        self.controller.stop()
 
     def ponderhit(self):
         pass

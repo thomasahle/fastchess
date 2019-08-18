@@ -1,3 +1,5 @@
+''' Module for making training data using stockfish. '''
+
 import chess
 import chess.uci
 import random

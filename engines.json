@@ -1,0 +1,13 @@
+[
+   {
+      "name": "stockfish",
+      "command": "/usr/local/bin/stockfish",
+      "protocol": "uci"
+   },
+   {
+      "name": "fastchess",
+      "command": "$PYTHON -u uci.py model.bin",
+      "workingDirectory": "$FILE",
+      "protocol": "uci"
+   }
+]

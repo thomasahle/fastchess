@@ -1,3 +1,4 @@
+import sys
 import chess
 import numpy as np
 import math
@@ -5,163 +6,125 @@ from math import sqrt
 import random
 import fastchess
 import pst
+from fastchess import mirror_move
+from collections import namedtuple
 
-class Model:
-    def __init__(self, fasttext_model, use_cache=False, policy_softmax_temp=1, formula=0):
-        self.fc = fasttext_model
-        self.cpuct = 2
-        self.cache = {}
-        self.use_cache = use_cache
-        self.policy_softmax_temp = policy_softmax_temp
-        self.formula = formula
 
-    def eval(self, board, debug=False):
-        """ Returns a single score relative to board.turn """
-        # If game over, just stop
-        if board.is_game_over():
-            v = {'1-0': 1, '0-1': -1, '1/2-1/2': 0}[board.result()]
-            return v if board.turn == chess.WHITE else -v
+Args = namedtuple('MctsArgs', ['model', 'debug', 'cpuct'])
 
-        # We first calculate the value relative to white
-        res = 0
-        for square, piece in board.piece_map().items():
-            p = piece.symbol()
-            if p.isupper():
-                res += pst.piece[p] + pst.pst[p][63 - square]
-            else:
-                p = p.upper()
-                res -= pst.piece[p] + pst.pst[p][square]
-        if debug:
-            print('Pre norm score:', res)
-        # Normalize in [-1, 1]
-        res = math.atan(res / 100) / math.pi * 2
-        if debug:
-            print('Post norm score:', res)
-        # Then flip it to the current player
-        return res if board.turn == chess.WHITE else -res
+class Node:
+    """Monte Carlo tree searcher. First rollout the tree then choose a move."""
 
-    def predict(self, board, n=40, debug=False):
-        """ Returns list of `n` (prob, move) legal pairs """
-        if self.use_cache:
-            key = board._transposition_key()
-            cached = self.cache.get(key)
-            if cached:
-                return cached
-        pre = {m: p for p, m in self.fc.find_moves(
-            board, n, debug=debug, flipped=False)}
-        res = []
-        for m in board.generate_legal_moves():
+    def __init__(self, parent_board, parent_vec, move, prior, args):
+        """ Make a new game node representing the state of pushing `move` to `parent_board`.
+            If `move` is None, the node is assumed to be a root node at `parent_board`. """
+        self.children = []
+        self.args = args
+        self.move = move
+        self.parent_board = parent_board
+        self.parent_vec = parent_vec
+        # We expand this as the node is visited
+        self.board = None
+        self.vec = None
+        # Statistics. P is prior, Q is avg reward and N is number of visits.
+        self.P = prior
+        self.Q = 1
+        self.N = 0
+        self.game_over = None
+        # If we are at the root, make a fake first rollout,
+        # just because the parent_board is actually the reeal board, and it's
+        # confusing otherwise.
+        if move is None:
+            # Could do this using null-move?...
+            self.board = parent_board
+            self.vec = parent_vec
+            # The Q value at the root doesn't really matter...
+            self.Q, self.game_over = self.args.model.eval(self.vec, self.board)
+            self.N = 1
+
+    def clean_moves(self):
+        board = self.board
+        moves = []
+        scores = []
+        vec = self.vec[1-int(board.turn)]
+
+        if self.args.debug:
+            vec1 = self.args.model.from_scratch(board, self.args.debug)[1-int(board.turn)]
+            if not np.allclose(vec, vec1, atol=1e-5, rtol=1e-2):
+                print(board)
+                print(vec1)
+                print(vec)
+                assert False
+
+        # TODO: Another approach is to use top_k to get the moves
+        #       and simply trust that they are legal.
+        # self.model.top_k(self.vec)
+        #for m in board.generate_legal_moves():
+        for m in board.legal_moves:
+            moves.append(m)
             cap = board.is_capture(m)
             # TODO: There might be a faster way, inspired by the is_into_check method.
+            # or _attackers_mask. Some sort of pseudo-is-check should be sufficient.
             board.push(m)
             chk = board.is_check()
             board.pop()
             # Hack: We make sure that checks and captures are always included,
             # and that no move has a completely non-existent prior.
-            p = max(pre.get(m, 0)**1/self.policy_softmax_temp, .01, .1 * int(chk or cap))
-            res.append((p, m))
-        psum = sum(p for p, _ in res)
-        res = [(p / psum, m) for p, m in res]
-        if self.use_cache:
-            self.cache[key] = res
-        return res
+            prior = vec[1 + self.args.model.move_to_id[m if board.turn else mirror_move(m)]]
+            # Add some bonus for being a legal move and check or cap.
+            # Maybe these values should be configurable.
+            prior += 1 + int(chk or cap)
+            scores.append(prior)
 
-
-class Node:
-    """Monte Carlo tree searcher. First rollout the tree then choose a move."""
-
-    def __init__(self, parent_board, move, prior, model, debug=False):
-        """ Make a new game node representing the state of pushing `move` to `parent_board`.
-            If `move` is None, the node is assumed to be a root node at `parent_board`. """
-        self.children = []
-        self.parent_board = parent_board
-        self.move = move
-        self.board = None  # We expand this as the node is visited
-        self.P = prior
-        self.Q = .99  # Q, avg reward of node
-        self.N = 0  # N, total visit count for node
-        self.model = model
-        self.debug = debug
-        # If we are at the root, make a fake first rollout.
-        if move is None:
-            self.board = parent_board
-            # The Q value at the root doesn't really matter...
-            self.Q = model.eval(self.board, debug=debug)
-            self.N = 1
-
-    def search(self, rolls):
-        """ Do `rolls` rollouts and return the best move. """
-        for i in range(rolls):
-            self.rollout()
-        return max(self.children, key=lambda n: n.N).move
-
-    def ucb(self, n):
-        # https://colab.research.google.com/drive/14v45o1xbfrBz0sG3mHbqFtYz_IrQHLTg#scrollTo=1VeRCpCSaHe3
-        ratio = n.P * self.N / (1 + n.N)
-        # AZ
-        if self.model.formula == 0:
-            return -n.Q + ratio * (math.log((self.N + 19652 + 1)/19652) + 1.25) / self.N**.5
-        # LZ old
-        if self.model.formula == 1:
-            return -n.Q + ratio * 0.8 / self.N**.5
-        # Old
-        if self.model.formula == 2:
-            return -n.Q + ratio * 3 / self.N**.5
-        # LZ new
-        if self.model.formula == 3:
-            return -n.Q + ratio * ((.5 * math.log(.015 * self.N + 1.7)) / self.N)**.5
-        # UCB
-        if self.model.formula == 4:
-            return -n.Q + ratio * (2*math.log(self.N) / (n.N + 1))**.5
+        # First entry keeps the word count
+        n = vec[0]
+        scores = np.array(scores) / n
+        scores = np.exp(scores - np.max(scores))
+        scores /= np.sum(scores)
+        return zip(scores, moves)
 
     def rollout(self):
         """ Returns the leaf value relative to the current player of the node. """
 
         self.N += 1
 
-        # TODO: This repeated is_game_over is actually quite expensive
-        if self.board and self.board.is_game_over():
-            # If board is set, Q should already be the evaluation, which includes
-            # checkmate/stalemate.
+        # Game over won't be set before the board is evaluated.
+        if self.game_over:
             return self.Q
 
         # If first visit, expand board
         if self.N == 1:
+            self.vec = self.args.model.apply(self.parent_vec.copy(), self.parent_board, self.move)
             # Don't copy the entire move stack, it just takes up memory.
             # We do need some though, to prevent repetition draws.
-            # Half move cluck is copied separately
+            # Half-move clock is copied separately
             self.board = self.parent_board.copy(stack=8)
             self.board.push(self.move)
-            self.Q = self.model.eval(self.board, debug=self.debug)
+
+            self.Q, self.game_over = self.args.model.eval(self.vec, self.board)
             return self.Q
 
         # If second visit, expand children
         if self.N == 2:
-            for p, move in self.model.predict(self.board, debug=self.debug):
-                if self.board.is_legal(move):
-                    self.children.append(Node(self.board, move, p, self.model))
-
-        # Identify losses, just an optimization for mates
-        # if all(n.Q == 1 for n in self.children):
-        #    self.Q = -1
-        #    return -1
+            for p, move in self.clean_moves():
+                self.children.append(Node(self.board, self.vec, move, p, self.args))
 
         # Find best child (small optimization, since this is actually a bottle neck)
         # TODO: Even now, this is still pretty slow
         # _, node = max((-n.Q + CPUCT * n.P * sqrtN / (1 + n.N), n) for n in self.children)
         # is better, but it fails when two nodes have the same score...
-        #sqrtN = self.N**.5
-        #node = max(self.children,
-                   #key=lambda n: -n.Q + self.model.cpuct * n.P * sqrtN / (1 + n.N))
-        node = max(self.children, key=self.ucb)
+        sqrtN = self.args.cpuct * math.sqrt(self.N)
+        node = max(self.children,
+                   key=lambda n: -n.Q + n.P * sqrtN / (1 + n.N))
 
-        # Visit it
+        # Visit it and flip the sign
         s = -node.rollout()
-        # Identify victories
-        # if s == 1:
-        #    self.Q = 1
-        #    return 1
+        # Update our own average reward
         self.Q = ((self.N - 1) * self.Q + s) / self.N
+
+        # TODO: Could update prior to safe division?
+        # self.P = (self.N - 1) * self.P / self.N
+
         # Propagate the value further up the tree
         return s
 
