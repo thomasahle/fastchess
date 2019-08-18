@@ -20,6 +20,25 @@ You'll need the following libraries:
     git clone git@github.com:mcostalba/Stockfish.git
     pip install python-chess
 
+Afterwards you can play by
+
+    $ python3 play_chess.py engines.json fastchess
+    Do you want to be white or black? white
+      8 ♜ ♞ ♝ ♛ ♚ ♝ ♞ ♜
+      7 ♟ ♟ ♟ ♟ ♟ ♟ ♟ ♟
+      6
+      5
+      4
+      3
+      2 ♙ ♙ ♙ ♙ ♙ ♙ ♙ ♙
+      1 ♖ ♘ ♗ ♕ ♔ ♗ ♘ ♖
+        a b c d e f g h
+
+    Your move (e.g. Nf3 or d2d4):
+
+Train the model
+===============
+
 You can train your own model as:
 
     python make_data.py -games 1000 | shuf > g1000

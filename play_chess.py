@@ -179,7 +179,6 @@ async def main():
     conf = json.load(open(args.conf))
     engine = await load_engine(conf, args.name, debug=args.debug)
     board = chess.Board(args.fen)
-    print(args)
 
     if args.no_mcts:
         limit = chess.engine.Limit(time=0)
