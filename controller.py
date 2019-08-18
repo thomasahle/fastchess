@@ -3,6 +3,7 @@ import time
 import numpy as np
 import random
 import math
+import itertools
 
 import fastchess
 import mcts
@@ -35,7 +36,9 @@ class MCTS_Controller:
         nps = STAT_INTERVAL / (new_time - self.old_time)
         self.old_time = new_time
         t = new_time - self.start_time
-        print(f'info string kl {-math.log(kl_div):.1f} root_score {self.node.Q}')
+        if kl_div > 0:
+            print(f'info string kl {-math.log(kl_div):.1f} root_score {self.node.Q}')
+        else: print(f'info string kl -inf root_score {self.node.Q}')
 
         root = self.node
         real_pvs = min(pvs, len(root.children))
@@ -61,7 +64,7 @@ class MCTS_Controller:
         self.should_stop = True
 
     def find_move(self, board, min_kldiv=0, max_rolls=0, max_time=0,
-                        pvs=0, temperature=False):
+                        pvs=0, temperature=False, use_mcts=True):
         """ Searches until kl_div is below `min_kldiv` or for `movetime' milliseconds, or if 0, for `rolls` rollouts. """
         # We try to reuse the previous node, but if we can't, we create a new one.
         if self.node:
@@ -89,35 +92,36 @@ class MCTS_Controller:
 
         # Find move to play
         self.should_stop = False
-        first = True
         kl_div = 1
         rolls = 0
         start_time = time.time()
-        while True:
-            rolls += 1
-            self.node.rollout()
-            if self.node.N % STAT_INTERVAL == 0:
-                kl_div = self.print_stats(first, pvs)
-                if self.should_stop:
-                    #print('break 1')
-                    break
-                if max_time > 0 and time.time() > start_time + max_time:
-                    #print('break 2')
-                    break
-                if max_rolls > 0 and rolls >= max_rolls:
-                    #print('break 3')
-                    break
-                if min_kldiv > 0 and kl_div < min_kldiv:
-                    #print('break 4', kl_div)
-                    break
-                first = False
+        if use_mcts:
+            first = True
+            for i in itertools.count():
+                rolls += 1
+                self.node.rollout()
+                if i % STAT_INTERVAL == 0:
+                    kl_div = self.print_stats(first, pvs)
+                    if self.should_stop:
+                        break
+                    if max_time > 0 and time.time() > start_time + max_time:
+                        break
+                    if max_rolls > 0 and rolls >= max_rolls:
+                        break
+                    if min_kldiv > 0 and kl_div < min_kldiv:
+                        break
+                    first = False
 
         # Pick best or random child
         if temperature:
-            counts = [(n.N / self.node.N)**(1 / temperature) for n in self.node.children]
+            if use_mcts:
+                counts = [(n.N / self.node.N)**(1 / temperature) for n in self.node.children]
+            else:
+                counts = [n.P**(1 / temperature) for n in self.node.children]
             node = random.choices(self.node.children, weights=counts)[0]
             if self.args.debug:
                 o = sorted(self.node.children, key=lambda n: -n.N).index(node)
+                # From https://codegolf.stackexchange.com/questions/4707#answer-4712
                 ordinal = (lambda n: "%d%s" % (n, "tsnrhtdd"[
                            (n / 10 % 10 != 1) * (n % 10 < 4) * n % 10::4]))(o + 1)
             self.node = node

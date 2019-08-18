@@ -72,11 +72,8 @@ class UCI:
                         if hasattr(val, 'default')}
 
         self.fastchess_model = fastchess.Model(args.model_path)
-        self.setoption(None, None)
-        self.controller = MCTS_Controller(args=mcts.Args(
-                model=self.fastchess_model,
-                debug=self.debug,
-                cpuct=3))
+        self.controller = None
+        self.setoption(None, None) # Inits controller with default settings
 
         self.nps = 0
         self.roll_kldiv = 1
@@ -221,21 +218,25 @@ class UCI:
 
         # See that some kind of condition has been set
         if not infinite and not (max_time or min_kldiv or max_rolls):
-            print('info string Need more time to move')
+            print('info string No time, using priors directly.')
+            use_mcts = False
+        else:
+            use_mcts = True
 
         temp = self.options['Temperature']/100
-        node, stats = self.controller.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time, temperature=temp, pvs=self.options['MultiPV'])
+        node, stats = self.controller.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time, temperature=temp, pvs=self.options['MultiPV'], use_mcts=use_mcts)
 
-        # Conservative discounting using the harmonic mean
-        if self.nps:
-            self.nps = 1/(.5/self.nps + .5/(stats.rolls / stats.elapsed))
-        else:
-            self.nps = stats.rolls / stats.elapsed
+        if use_mcts:
+            # Conservative discounting using the harmonic mean
+            if self.nps:
+                self.nps = 1/(.5/self.nps + .5/(stats.rolls / stats.elapsed))
+            else:
+                self.nps = stats.rolls / stats.elapsed
 
-        # Don't use discounting when guessing the constant C such that kl_div = C/rolls.
-        self.roll_kldiv = (stats.kl_div * stats.rolls**2 + self.roll_kldiv * self.tot_rolls)/(self.tot_rolls + stats.rolls)
-        self.tot_rolls += stats.rolls
-        print(f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls} kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
+            # Don't use discounting when guessing the constant C such that kl_div = C/rolls.
+            self.roll_kldiv = (stats.kl_div * stats.rolls**2 + self.roll_kldiv * self.tot_rolls)/(self.tot_rolls + stats.rolls)
+            self.tot_rolls += stats.rolls
+            print(f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls} kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
 
         # Hack to ensure we can always get the bestmove from python-chess
         print(f'info pv {node.move.uci()}')

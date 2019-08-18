@@ -15,7 +15,9 @@ parser.add_argument('conf', help='Location of engines.json file to use')
 parser.add_argument('name', help='Name of engine to use')
 parser.add_argument('-selfplay', action='store_true', help='Play against itself')
 parser.add_argument('-debug', action='store_true', help='Enable debugging of engine')
-parser.add_argument('-movetime', type=int, default=1000, help='Movetime in ms')
+parser.add_argument('-movetime', type=int, default=0, help='Movetime in ms')
+parser.add_argument('-nodes', type=int, default=0, help='Maximum nodes')
+parser.add_argument('-no-mcts', action='store_true', help='Play directly from priors')
 parser.add_argument(
     '-pvs', nargs='?', help='Show Principal Variations (when mcts)', const=3, default=0, type=int)
 parser.add_argument('-fen', help='Start from given position',
@@ -90,12 +92,12 @@ def print_unicode_board(board, perspective=chess.WHITE):
 
 async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
     multipv = min(multipv, board.legal_moves.count())
-    print('\n'*(multipv+1), end='')
 
     with await engine.analysis(board, limit, game=game_id,
             info=chess.engine.INFO_ALL, multipv=max(1,multipv)) as analysis:
 
         infos = [None for _ in range(multipv)]
+        first = True
         async for new_info in analysis:
             # If multipv = 0 it means we don't want them at all,
             # but uci requires MultiPV to be at least 1.
@@ -107,11 +109,15 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
                 print(new_info['string'])
 
             if not debug and all(infos) and 'score' in analysis.info:
-                print(f"\u001b[1A\u001b[K" * (multipv+1), end='')
+                if not first:
+                    #print('\n'*(multipv+1), end='')
+                    print(f"\u001b[1A\u001b[K" * (multipv+1), end='')
+                else:
+                    first = False
 
                 info = analysis.info
                 score = info['score'].relative
-                score = f'Score: {score.score()}' if score.score() else f'Mate in {score.mate()}'
+                score = f'Score: {score.score()}' if score.score() is not None else f'Mate in {score.mate()}'
                 print(f'{score}, nodes: {info["nodes"]}, nps: {info["nps"]}, time: {float(info["time"]):.1f}', end='')
                 print()
 
@@ -136,7 +142,7 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
 
         return analysis.info['pv'][0]
 
-async def play(engine, board, selfplay, pvs, movetime, debug=False):
+async def play(engine, board, selfplay, pvs, time_limit, debug=False):
     if not selfplay:
         user_color = get_user_color()
     else: user_color = chess.WHITE
@@ -146,18 +152,12 @@ async def play(engine, board, selfplay, pvs, movetime, debug=False):
 
     game_id = random.random()
 
-    # TODO: Handle limits
-    limit = chess.engine.Limit(time=movetime)
-
-    # engine.configure
-    # with options
-
     while not board.is_game_over():
         print_unicode_board(board, perspective=user_color)
         if not selfplay and user_color == board.turn:
             move = get_user_move(board)
         else:
-            move = await get_engine_move(engine, board, limit, game_id, pvs, debug=debug)
+            move = await get_engine_move(engine, board, time_limit, game_id, pvs, debug=debug)
             print(f' My move: {board.san(move)}')
         board.push(move)
 
@@ -171,9 +171,19 @@ async def main():
     conf = json.load(open(args.conf))
     engine = await load_engine(conf, args.name, debug=args.debug)
     board = chess.Board(args.fen)
+    print(args)
+
+    if args.no_mcts:
+        limit = chess.engine.Limit(time=0)
+    elif args.movetime:
+        limit = chess.engine.Limit(time=args.movetime/1000)
+    elif args.nodes:
+        limit = chess.engine.Limit(nodes=args.nodes)
+    else:
+        limit = chess.engine.Limit(white_clock=30, black_clock=30, remaining_moves=30)
 
     try:
-        await play(engine, board, selfplay=args.selfplay, pvs=args.pvs, movetime=args.movetime/1000, debug=args.debug)
+        await play(engine, board, selfplay=args.selfplay, pvs=args.pvs, time_limit=limit, debug=args.debug)
     except KeyboardInterrupt:
         pass
     finally:
