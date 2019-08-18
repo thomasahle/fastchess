@@ -40,51 +40,14 @@ class Node:
             self.board = parent_board
             self.vec = parent_vec
             # The Q value at the root doesn't really matter...
-            self.Q, self.game_over = self.args.model.eval(self.vec, self.board)
+            self.Q, self.game_over = self.eval(self.vec, self.board)
             self.N = 1
 
-    def clean_moves(self):
-        board = self.board
-        moves = []
-        scores = []
-        vec = self.vec[1 - int(board.turn)]
-
-        if self.args.debug:
-            vec1 = self.args.model.from_scratch(board, self.args.debug)[
-                1 - int(board.turn)]
-            if not np.allclose(vec, vec1, atol=1e-5, rtol=1e-2):
-                print(board)
-                print(vec1)
-                print(vec)
-                assert False
-
-        # TODO: Another approach is to use top_k to get the moves
-        #       and simply trust that they are legal.
-        # self.model.top_k(self.vec)
-        # for m in board.generate_legal_moves():
-        for m in board.legal_moves:
-            moves.append(m)
-            cap = board.is_capture(m)
-            # TODO: There might be a faster way, inspired by the is_into_check method.
-            # or _attackers_mask. Some sort of pseudo-is-check should be sufficient.
-            board.push(m)
-            chk = board.is_check()
-            board.pop()
-            # Hack: We make sure that checks and captures are always included,
-            # and that no move has a completely non-existent prior.
-            prior = vec[1 +
-                        self.args.model.move_to_id[m if board.turn else mirror_move(m)]]
-            # Add some bonus for being a legal move and check or cap.
-            # Maybe these values should be configurable.
-            prior += 1 + int(chk or cap)
-            scores.append(prior)
-
-        # First entry keeps the word count
-        n = vec[0]
-        scores = np.array(scores) / n
-        scores = np.exp(scores - np.max(scores))
-        scores /= np.sum(scores)
-        return zip(scores, moves)
+    def eval(self, vec, board):
+        v = {'1-0': 1, '0-1': -1, '1/2-1/2': 0, '*': None}[board.result()]
+        if v is not None:
+            return (v if board.turn == chess.WHITE else -v), True
+        return self.args.model.get_eval(vec, board), False
 
     def rollout(self):
         """ Returns the leaf value relative to the current player of the node. """
@@ -105,12 +68,13 @@ class Node:
             self.board = self.parent_board.copy(stack=8)
             self.board.push(self.move)
 
-            self.Q, self.game_over = self.args.model.eval(self.vec, self.board)
+            self.Q, self.game_over = self.eval(self.vec, self.board)
             return self.Q
 
         # If second visit, expand children
         if self.N == 2:
-            for p, move in self.clean_moves():
+            for p, move in self.args.model.get_clean_moves(
+                    self.board, self.vec, debug=self.args.debug):
                 self.children.append(Node(self.board, self.vec, move, p, self.args))
 
         # Find best child (small optimization, since this is actually a bottle neck)

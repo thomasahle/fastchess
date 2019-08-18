@@ -7,19 +7,25 @@ from collections import defaultdict
 import numpy as np
 import pst
 
+EVAL_INDEX = 0
+COUNT_INDEX = 1
+
 
 class Model:
     def __init__(self, path):
         ft = self.ft = fasttext.load_model(path)
         vectors = (ft.get_output_matrix() @ ft.get_input_matrix().T).T
-        rows, cols = vectors.shape
-        # Add counts
-        vectors = np.hstack([np.ones(rows).reshape(rows, 1), vectors])
+        rows, _cols = vectors.shape
+        # Add counts and evals
+        vectors = np.hstack([
+            np.ones(rows).reshape(rows, 1),
+            vectors])
         # maybe its an occ model?
         self.occ = False
-        # vectors[i]
+
         # Start with bias
-        bias = vectors[0]
+        bias = np.hstack([[0], vectors[0]])
+
         # Parse remaining words
         piece_to_vec = defaultdict(lambda: 0)
         castling = {}
@@ -29,14 +35,17 @@ class Model:
                 self.occ = True
                 for color in chess.COLORS:
                     for piece_type in chess.PIECE_TYPES:
-                        piece_to_vec[piece_type, color, sq] += v
+                        piece_to_vec[piece_type, color, sq] += np.hstack([[0], v])
             elif w.endswith('-C'):
-                castling[sq] = v
+                e = 0  # Castling rights don't currently have a value
+                castling[sq] = np.hstack([[e], v])
             else:
                 piece = chess.Piece.from_symbol(w[2])
-                piece_to_vec[piece.piece_type, piece.color, sq] += v
+                e = self.get_piece_eval(piece.piece_type, piece.color, sq)
+                piece_to_vec[piece.piece_type, piece.color, sq] += np.hstack([[e], v])
 
         # Convert to two-colours
+        # We keep a record of the board from both perspectives
         piece_to_vec2 = {}
         for (piece_type, color, sq), v in piece_to_vec.items():
             inv = piece_to_vec[piece_type, not color, chess.square_mirror(sq)]
@@ -50,43 +59,46 @@ class Model:
         # Parse labels
         self.moves = [chess.Move.from_uci(label_uci[len('__label__'):])
                       for label_uci in ft.labels]
-        self.move_to_id = {move: i for i, move in enumerate(self.moves)}
 
-    def old_find_moves(self, board, n_labels=20, occ=False):
-        """ Returns a list of up to `n_labels` (move, prob) tuples, restricted
-            to legal moves.  Probabilities may not sum to 1. """
+        # Adding 2 to the move ids, since the first entry will be the count,
+        # and the second entry will be the evaluation
+        self.move_to_id = {move: i + 2 for i, move in enumerate(self.moves)}
 
-        if board.turn == chess.BLACK:
-            white_moves = self.old_find_moves(board.mirror(), n_labels, occ)
-            return [(p, mirror_move(m)) for p, m in white_moves]
+    def get_piece_eval(self, piece_type, color, square):
+        symbol = chess.Piece(piece_type, color).symbol().upper()
+        if color == chess.WHITE:
+            return pst.piece[symbol] + pst.pst[symbol][chess.square_mirror(square)]
+        else:
+            return - (pst.piece[symbol] + pst.pst[symbol][square])
 
-        pos = ' '.join(board_to_words(board, occ=occ))
-        labels, probs = self.ft.predict(pos, n_labels)
-        labels = [l[len('__label__'):] for l in labels]
-
-        return [(p, m) for m, p in zip(map(chess.Move.from_uci, labels), probs)
-                if board.is_legal(m)]
-
-    def eval(self, vec, board):
+    def get_eval(self, vec, board, debug=False):
         """ Returns a single score relative to board.turn """
+        # TODO: It's interesting whether a model trained directly on the [-1,1] range
+        # does better or worse than this.
 
-        v = {'1-0': 1, '0-1': -1, '1/2-1/2': 0, '*': None}[board.result()]
-        if v is not None:
-            return (v if board.turn == chess.WHITE else -v), True
+        res = cp_to_win(vec[1 - int(board.turn), EVAL_INDEX])
 
+        if debug:
+            assert vec[0, EVAL_INDEX] == -vec[1, EVAL_INDEX]
+            fs = self._eval_from_scratch(vec, board)
+            assert np.allclose(res, fs)
+
+        return res
+
+    def _eval_from_scratch(self, vec, board):
         # We first calculate the value relative to white
         res = 0
         for square, piece in board.piece_map().items():
             p = piece.symbol()
             if p.isupper():
-                res += pst.piece[p] + pst.pst[p][63 - square]
+                res += pst.piece[p] + pst.pst[p][chess.square_mirror(square)]
             else:
                 p = p.upper()
                 res -= pst.piece[p] + pst.pst[p][square]
         # Normalize in [-1, 1]
         res = cp_to_win(res)
         # Then flip it to the current player
-        return (res if board.turn == chess.WHITE else -res), False
+        return res if board.turn == chess.WHITE else -res
 
     def get_top_k(self, vec, k):
         for i in np.argpartition(vec, -k)[-k:]:
@@ -110,8 +122,8 @@ class Model:
                         board.mirror(),
                         occ=self.occ)))
             sv = (self.ft.get_output_matrix() @ np.vstack([v1, v2]).T).T
-            n = vec[0, 0]
-            v = vec[:, 1:]
+            n = vec[0, 1]
+            v = vec[:, 2:]
             if not np.allclose(sv, v / n, atol=1e-5, rtol=1e-2):
                 print(sv)
                 print(v / n)
@@ -172,6 +184,46 @@ class Model:
         vec += self.piece_to_vec[move.promotion or piece_type, color, move.to_square]
         return vec
 
+    def get_clean_moves(self, board, vec, bonus=1, cap_bonus=1, chk_bonus=1, debug=False):
+        ''' Returns a list of (prior, move) pairs containing all legal moves. '''
+        moves = []
+        scores = []
+        vec = vec[1 - int(board.turn)]
+
+        if debug:
+            vec1 = self.from_scratch(board, debug)[1 - int(board.turn)]
+            if not np.allclose(vec, vec1, atol=1e-5, rtol=1e-2):
+                print(board)
+                print(vec1)
+                print(vec)
+                assert False
+
+        # TODO: Another approach is to use top_k to get the moves
+        #       and simply trust that they are legal.
+        # self.model.top_k(self.vec)
+        for m in board.legal_moves:
+            moves.append(m)
+            cap = board.is_capture(m)
+            # TODO: There might be a faster way, inspired by the is_into_check method.
+            # or _attackers_mask. Some sort of pseudo-is-check should be sufficient.
+            board.push(m)
+            chk = board.is_check()
+            board.pop()
+            # Hack: We make sure that checks and captures are always included,
+            # and that no move has a completely non-existent prior.
+            prior = vec[self.move_to_id[m if board.turn else mirror_move(m)]]
+            # Add some bonus for being a legal move and check or cap.
+            # TODO: Maybe these values should be configurable, or max-based.
+            prior += bonus + chk_bonus * int(chk) + cap_bonus * int(cap)
+            scores.append(prior)
+
+        # First entry keeps the word count
+        n = vec[COUNT_INDEX]
+        scores = np.array(scores) / n
+        scores = np.exp(scores - np.max(scores))
+        scores /= np.sum(scores)
+        return zip(scores, moves)
+
 
 def win_to_cp(win):
     return math.tan(win * math.pi / 2) * 100
@@ -196,15 +248,6 @@ def board_to_words(board, occ=False):
         for square in chess.scan_forward(board.occupied):
             yield f'{chess.SQUARE_NAMES[square]}-Occ'
 
-# TODO: Consider the following code used by python-chess to compue transposition-keys.
-#       Should we use something similar to compress board_to_words?
-# def _transposition_key(self) -> Hashable:
-#     return (self.pawns, self.knights, self.bishops, self.rooks,
-#             self.queens, self.kings,
-#             self.occupied_co[WHITE], self.occupied_co[BLACK],
-#             self.turn, self.clean_castling_rights(),
-#             self.ep_square if self.has_legal_en_passant() else None)
-
 
 def mirror_move(move):
     return chess.Move(chess.square_mirror(move.from_square),
@@ -220,71 +263,3 @@ def prepare_example(board, move, occ=False):
         string = ' '.join(board_to_words(board.mirror(), occ=occ))
         uci_move = mirror_move(move).uci()
     return f'{string} __label__{uci_move}'
-
-
-class Model_Old:
-    def __init__(self, path, occ):
-        self.model = fasttext.load_model(path)
-        self.occ = occ
-
-    def find_move(self, board, max_labels=20,
-                  pick_random=False, debug=True, flipped=False):
-        # We always predict form white's perspective
-        if board.turn == chess.BLACK:
-            return mirror_move(self.find_move(
-                board.mirror(), max_labels, pick_random, debug, flipped=True))
-
-        pos = ' '.join(board_to_words(board, occ=self.occ))
-        # Keep predicting more labels until a legal one comes up
-        for k in range(10, max_labels, 5):
-            ps_mvs = self.find_moves(board, max_labels, debug, flipped)
-            if not ps_mvs:
-                continue
-
-            if pick_random:
-                # Return move by probability distribution
-                ps, mvs = zip(*ps_mvs)
-                return random.choices(mvs, weights=ps)[0]
-            else:
-                # Return best legal move
-                p, mv = max(ps_mvs)
-                return mv
-
-        if debug:
-            print('Warning: Unable to find a legal move in first {} labels.'
-                  .format(max_labels))
-
-        return random.choice(list(board.legal_moves))
-
-    def find_moves(self, board, n_labels=20, debug=True, flipped=False):
-        """ Returns a list of up to `n_labels` (move, prob) tuples, restricted
-            to legal moves.  Probabilities may not sum to 1. """
-
-        if board.turn == chess.BLACK:
-            white_moves = self.find_moves(
-                board.mirror(), n_labels, debug, flipped=True)
-            return [(p, mirror_move(m)) for p, m in white_moves]
-
-        pos = ' '.join(board_to_words(board, occ=self.occ))
-        labels, probs = self.model.predict(pos, n_labels)
-        labels = [l[len('__label__'):] for l in labels]
-
-        if debug:
-            ucis = [chess.Move.from_uci(l) for l in labels]
-            db = board
-            if flipped:
-                ucis = [mirror_move(uci) for uci in ucis]
-                db = board.mirror()
-            top_list = []
-            for uci, p in zip(ucis, probs):
-                if db.is_legal(uci):
-                    san = db.san(uci)
-                    tag = f'{p:.1%}'
-                else:
-                    san = uci.uci()
-                    tag = f'illegal, {p:.1%}'
-                top_list.append(f'{san} ({tag})')
-            print('Top moves:', ', '.join(top_list))
-
-        return [(p, m) for m, p in zip(map(chess.Move.from_uci, labels), probs)
-                if board.is_legal(m)]
