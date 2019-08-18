@@ -7,16 +7,17 @@ from collections import defaultdict
 import numpy as np
 import pst
 
+
 class Model:
     def __init__(self, path):
         ft = self.ft = fasttext.load_model(path)
         vectors = (ft.get_output_matrix() @ ft.get_input_matrix().T).T
         rows, cols = vectors.shape
         # Add counts
-        vectors = np.hstack([np.ones(rows).reshape(rows,1), vectors])
+        vectors = np.hstack([np.ones(rows).reshape(rows, 1), vectors])
         # maybe its an occ model?
         self.occ = False
-        #vectors[i]
+        # vectors[i]
         # Start with bias
         bias = vectors[0]
         # Parse remaining words
@@ -47,7 +48,8 @@ class Model:
                          for sq, v in castling.items()}
 
         # Parse labels
-        self.moves = [chess.Move.from_uci(label_uci[len('__label__'):]) for label_uci in ft.labels]
+        self.moves = [chess.Move.from_uci(label_uci[len('__label__'):])
+                      for label_uci in ft.labels]
         self.move_to_id = {move: i for i, move in enumerate(self.moves)}
 
     def old_find_moves(self, board, n_labels=20, occ=False):
@@ -100,16 +102,21 @@ class Model:
                 vec += self.castling[sq]
 
         if debug:
-            v1 = self.ft.get_sentence_vector(' '.join(board_to_words(board, occ=self.occ)))
-            v2 = self.ft.get_sentence_vector(' '.join(board_to_words(board.mirror(), occ=self.occ)))
-            sv = (self.ft.get_output_matrix() @ np.vstack([v1,v2]).T).T
-            n = vec[0,0]
-            v = vec[:,1:]
-            if not np.allclose(sv, v/n, atol=1e-5, rtol=1e-2):
+            v1 = self.ft.get_sentence_vector(
+                ' '.join(board_to_words(board, occ=self.occ)))
+            v2 = self.ft.get_sentence_vector(
+                ' '.join(
+                    board_to_words(
+                        board.mirror(),
+                        occ=self.occ)))
+            sv = (self.ft.get_output_matrix() @ np.vstack([v1, v2]).T).T
+            n = vec[0, 0]
+            v = vec[:, 1:]
+            if not np.allclose(sv, v / n, atol=1e-5, rtol=1e-2):
                 print(sv)
-                print(v/n)
-                print(np.max(np.abs(sv-vec/n)))
-                print(np.max(sv/(v/n)), np.min(sv/(v/n)))
+                print(v / n)
+                print(np.max(np.abs(sv - vec / n)))
+                print(np.max(sv / (v / n)), np.min(sv / (v / n)))
                 assert False
 
         return vec
@@ -125,7 +132,8 @@ class Model:
 
         # Update castling rights.
         old_castling_rights = board.clean_castling_rights()
-        new_castling_rights = old_castling_rights & ~chess.BB_SQUARES[move.to_square] & ~chess.BB_SQUARES[move.from_square]
+        new_castling_rights = old_castling_rights & ~chess.BB_SQUARES[
+            move.to_square] & ~chess.BB_SQUARES[move.from_square]
         if piece_type == chess.KING:
             new_castling_rights &= ~chess.BB_RANK_1 if color else ~chess.BB_RANK_8
         # Castling rights can only have been removed
@@ -164,11 +172,14 @@ class Model:
         vec += self.piece_to_vec[move.promotion or piece_type, color, move.to_square]
         return vec
 
+
 def win_to_cp(win):
-    return math.tan(win*math.pi/2)*100
+    return math.tan(win * math.pi / 2) * 100
+
 
 def cp_to_win(cp):
-    return math.atan(cp/100)*2/math.pi
+    return math.atan(cp / 100) * 2 / math.pi
+
 
 def board_to_words(board, occ=False):
     for s, p in board.piece_map().items():
@@ -193,6 +204,7 @@ def board_to_words(board, occ=False):
 #             self.occupied_co[WHITE], self.occupied_co[BLACK],
 #             self.turn, self.clean_castling_rights(),
 #             self.ep_square if self.has_legal_en_passant() else None)
+
 
 def mirror_move(move):
     return chess.Move(chess.square_mirror(move.from_square),

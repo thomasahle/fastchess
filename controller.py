@@ -13,6 +13,7 @@ MIN_PV_VISITS = 100
 
 Stats = namedtuple('Stats', ['kl_div', 'rolls', 'elapsed'])
 
+
 class MCTS_Controller:
     def __init__(self, args):
         self.args = args
@@ -38,7 +39,8 @@ class MCTS_Controller:
         t = new_time - self.start_time
         if kl_div > 0:
             print(f'info string kl {-math.log(kl_div):.1f} root_score {self.node.Q}')
-        else: print(f'info string kl -inf root_score {self.node.Q}')
+        else:
+            print(f'info string kl -inf root_score {self.node.Q}')
 
         root = self.node
         real_pvs = min(pvs, len(root.children))
@@ -56,15 +58,16 @@ class MCTS_Controller:
 
             score = fastchess.win_to_cp(Q)
             extras = f'time {t*1000:.0f} nodes {self.node.N} nps {nps:.0f}' if i == 0 else ''
-            print(f'info multipv {i+1} score cp {score:.0f} depth {len(pv)} {extras} pv {" ".join(pv)} string pv_nodes {N}')
-            #string pv_score  {score:.0f} pv_nodes {N}')
+            print(
+                f'info multipv {i+1} score cp {score:.0f} depth {len(pv)} {extras} pv {" ".join(pv)} string pv_nodes {N}')
+            # string pv_score  {score:.0f} pv_nodes {N}')
         return kl_div
 
     def stop(self):
         self.should_stop = True
 
     def find_move(self, board, min_kldiv=0, max_rolls=0, max_time=0,
-                        pvs=0, temperature=False, use_mcts=True):
+                  pvs=0, temperature=False, use_mcts=True):
         """ Searches until kl_div is below `min_kldiv` or for `movetime' milliseconds, or if 0, for `rolls` rollouts. """
         # We try to reuse the previous node, but if we can't, we create a new one.
         if self.node:
@@ -88,7 +91,7 @@ class MCTS_Controller:
             self.node.rollout()  # Ensure children are expanded
         nodes = sorted(self.node.children, key=lambda n: n.P, reverse=True)[:7]
         print('info string priors', ', '.join(
-                f'{board.san(n.move)} {n.P:.1%}' for n in nodes))
+            f'{board.san(n.move)} {n.P:.1%}' for n in nodes))
 
         # Find move to play
         self.should_stop = False
@@ -115,7 +118,8 @@ class MCTS_Controller:
         # Pick best or random child
         if temperature:
             if use_mcts:
-                counts = [(n.N / self.node.N)**(1 / temperature) for n in self.node.children]
+                counts = [(n.N / self.node.N)**(1 / temperature)
+                          for n in self.node.children]
             else:
                 counts = [n.P**(1 / temperature) for n in self.node.children]
             node = random.choices(self.node.children, weights=counts)[0]
@@ -130,4 +134,3 @@ class MCTS_Controller:
 
         stats = Stats(kl_div, rolls, time.time() - start_time)
         return self.node, stats
-

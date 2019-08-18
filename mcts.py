@@ -12,6 +12,7 @@ from collections import namedtuple
 
 Args = namedtuple('MctsArgs', ['model', 'debug', 'cpuct'])
 
+
 class Node:
     """Monte Carlo tree searcher. First rollout the tree then choose a move."""
 
@@ -46,10 +47,11 @@ class Node:
         board = self.board
         moves = []
         scores = []
-        vec = self.vec[1-int(board.turn)]
+        vec = self.vec[1 - int(board.turn)]
 
         if self.args.debug:
-            vec1 = self.args.model.from_scratch(board, self.args.debug)[1-int(board.turn)]
+            vec1 = self.args.model.from_scratch(board, self.args.debug)[
+                1 - int(board.turn)]
             if not np.allclose(vec, vec1, atol=1e-5, rtol=1e-2):
                 print(board)
                 print(vec1)
@@ -59,7 +61,7 @@ class Node:
         # TODO: Another approach is to use top_k to get the moves
         #       and simply trust that they are legal.
         # self.model.top_k(self.vec)
-        #for m in board.generate_legal_moves():
+        # for m in board.generate_legal_moves():
         for m in board.legal_moves:
             moves.append(m)
             cap = board.is_capture(m)
@@ -70,7 +72,8 @@ class Node:
             board.pop()
             # Hack: We make sure that checks and captures are always included,
             # and that no move has a completely non-existent prior.
-            prior = vec[1 + self.args.model.move_to_id[m if board.turn else mirror_move(m)]]
+            prior = vec[1 +
+                        self.args.model.move_to_id[m if board.turn else mirror_move(m)]]
             # Add some bonus for being a legal move and check or cap.
             # Maybe these values should be configurable.
             prior += 1 + int(chk or cap)
@@ -94,7 +97,8 @@ class Node:
 
         # If first visit, expand board
         if self.N == 1:
-            self.vec = self.args.model.apply(self.parent_vec.copy(), self.parent_board, self.move)
+            self.vec = self.args.model.apply(
+                self.parent_vec.copy(), self.parent_board, self.move)
             # Don't copy the entire move stack, it just takes up memory.
             # We do need some though, to prevent repetition draws.
             # Half-move clock is copied separately
@@ -127,4 +131,3 @@ class Node:
 
         # Propagate the value further up the tree
         return s
-

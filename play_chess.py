@@ -38,7 +38,7 @@ async def load_engine(engine_args, name, debug=False):
     elif args['protocol'] == 'xboard':
         _, engine = await chess.engine.popen_xboard(cmd, **popen_args)
     engine.debug(debug)
-    await engine.configure({opt['name']: opt['value'] for opt in args.get('options',[])})
+    await engine.configure({opt['name']: opt['value'] for opt in args.get('options', [])})
     return engine
 
 
@@ -83,18 +83,20 @@ def print_unicode_board(board, perspective=chess.WHITE):
                 elif board.move_stack[-1].from_square == 8 * r + c:
                     color = '\x1b[48;5;153m'
             piece = board.piece_at(8 * r + c)
-            line.append(color + (chess.UNICODE_PIECE_SYMBOLS[piece.symbol()] if piece else ' '))
+            line.append(color +
+                        (chess.UNICODE_PIECE_SYMBOLS[piece.symbol()] if piece else ' '))
         print(' ' + ' '.join(line) + f' {sc} {ec}')
     if perspective == chess.WHITE:
         print(f' {sc}   a b c d e f g h  {ec}\n')
     else:
         print(f' {sc}   h g f e d c b a  {ec}\n')
 
+
 async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
     multipv = min(multipv, board.legal_moves.count())
 
     with await engine.analysis(board, limit, game=game_id,
-            info=chess.engine.INFO_ALL, multipv=max(1,multipv)) as analysis:
+                               info=chess.engine.INFO_ALL, multipv=max(1, multipv)) as analysis:
 
         infos = [None for _ in range(multipv)]
         first = True
@@ -102,7 +104,7 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
             # If multipv = 0 it means we don't want them at all,
             # but uci requires MultiPV to be at least 1.
             if multipv and 'multipv' in new_info:
-                infos[new_info['multipv']-1] = new_info
+                infos[new_info['multipv'] - 1] = new_info
 
             # Parse optional arguments into a dict
             if debug and 'string' in new_info:
@@ -111,14 +113,17 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
             if not debug and all(infos) and 'score' in analysis.info:
                 if not first:
                     #print('\n'*(multipv+1), end='')
-                    print(f"\u001b[1A\u001b[K" * (multipv+1), end='')
+                    print(f"\u001b[1A\u001b[K" * (multipv + 1), end='')
                 else:
                     first = False
 
                 info = analysis.info
                 score = info['score'].relative
-                score = f'Score: {score.score()}' if score.score() is not None else f'Mate in {score.mate()}'
-                print(f'{score}, nodes: {info["nodes"]}, nps: {info["nps"]}, time: {float(info["time"]):.1f}', end='')
+                score = f'Score: {score.score()}' if score.score(
+                ) is not None else f'Mate in {score.mate()}'
+                print(
+                    f'{score}, nodes: {info["nodes"]}, nps: {info["nps"]}, time: {float(info["time"]):.1f}',
+                    end='')
                 print()
 
                 for info in infos:
@@ -126,11 +131,12 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
 
                     if 'score' in info:
                         score = info['score'].relative
-                        score = fastchess.cp_to_win(score.score()) if score.score() is not None else score.mate()
+                        score = fastchess.cp_to_win(
+                            score.score()) if score.score() is not None else score.mate()
                         key, *val = info.get('string', '').split()
                         if key == 'pv_nodes':
                             nodes = int(val[0])
-                            rel = nodes/analysis.info['nodes']
+                            rel = nodes / analysis.info['nodes']
                             score_rel = f'({score:.2f}, {rel*100:.0f}%)'
                         else:
                             score_rel = f'({score:.2f})'
@@ -142,10 +148,12 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
 
         return analysis.info['pv'][0]
 
+
 async def play(engine, board, selfplay, pvs, time_limit, debug=False):
     if not selfplay:
         user_color = get_user_color()
-    else: user_color = chess.WHITE
+    else:
+        user_color = chess.WHITE
 
     if not board:
         board = chess.Board()
@@ -176,7 +184,7 @@ async def main():
     if args.no_mcts:
         limit = chess.engine.Limit(time=0)
     elif args.movetime:
-        limit = chess.engine.Limit(time=args.movetime/1000)
+        limit = chess.engine.Limit(time=args.movetime / 1000)
     elif args.nodes:
         limit = chess.engine.Limit(nodes=args.nodes)
     else:
