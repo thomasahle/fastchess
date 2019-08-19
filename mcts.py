@@ -42,6 +42,9 @@ class Node:
             # The Q value at the root doesn't really matter...
             self.Q, self.game_over = self.eval(self.vec, self.board)
             self.N = 1
+            # Even if we think it's game-over (like a repetition), we continue to
+            # play of people ask us to.
+            self.game_over = False
 
     def eval(self, vec, board):
         v = {'1-0': 1, '0-1': -1, '1/2-1/2': 0, '*': None}[board.result()]

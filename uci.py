@@ -45,7 +45,7 @@ class UCI:
         self.debug = False
         self.board = chess.Board()
         self.option_types = {
-            'ModelPath': Type_String(default='model.bin'),
+            'ModelPath': Type_String(default='models/model.bin'),
             # Play random moves from the posterior distribution to the temp/100 power.
             'Temperature': Type_Spin(default=0, min=0, max=100),
             'MultiPV': Type_Spin(default=0, min=0, max=10),
