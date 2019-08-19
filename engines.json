@@ -20,6 +20,12 @@
       "protocol": "xboard"
    },
    {
+      "name": "pychess",
+      "command": "python3 -u pychess/Players/PyChess.py",
+      "workingDirectory": "$FILE/../pychess/lib",
+      "protocol": "xboard"
+   },
+   {
       "name": "feeks",
       "command": "$PYTHON -u main.py",
       "workingDirectory": "$FILE/../feeks",
