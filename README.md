@@ -14,10 +14,11 @@ Screenshot
 Run it!
 =======
 
-You'll need the following two libraries:
+You'll need the following libraries:
 
     pip install git+https://github.com/facebookresearch/fastText.git
-    pip install python-chess
+    pip install git+https://github.com/niklasf/python-chess.git
+    pip install numpy
 
 Afterwards you can play by
 
