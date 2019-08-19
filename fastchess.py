@@ -174,6 +174,8 @@ class Model:
 
         return vec
 
+    # TODO: Maybe we should just subclass chess.Board like in feeks:
+    # https://github.com/flok99/feeks/blob/master/board.py
     def apply(self, vec, board, move):
         """ Should be called prior to pushing move to board.
             Applies the move to the vector. """

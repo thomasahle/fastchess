@@ -47,6 +47,10 @@ class Node:
         v = {'1-0': 1, '0-1': -1, '1/2-1/2': 0, '*': None}[board.result()]
         if v is not None:
             return (v if board.turn == chess.WHITE else -v), True
+        # Result doesn't check for repetitions unless we add claim_draw=True,
+        # but even then it doesn't quite do what we want.
+        if board.is_repetition(count=2):
+            return 0, True
         return self.args.model.get_eval(vec, board), False
 
     def rollout(self):
@@ -65,7 +69,7 @@ class Node:
             # Don't copy the entire move stack, it just takes up memory.
             # We do need some though, to prevent repetition draws.
             # Half-move clock is copied separately
-            self.board = self.parent_board.copy(stack=8)
+            self.board = self.parent_board.copy(stack=3)
             self.board.push(self.move)
 
             self.Q, self.game_over = self.eval(self.vec, self.board)
