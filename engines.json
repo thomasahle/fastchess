@@ -8,7 +8,10 @@
       "name": "fastchess",
       "command": "$PYTHON -u uci.py",
       "workingDirectory": "$FILE",
-      "protocol": "uci"
+      "protocol": "uci",
+      "options": [
+         {"name": "ModelPath", "value": "models/model.bin"}
+      ]
    },
    {
       "name": "sunfish",
