@@ -132,8 +132,8 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
                 score = info['score'].relative
                 score = f'Score: {score.score()}' \
                         if score.score() is not None else f'Mate in {score.mate()}'
-                print(f'{score}, nodes: {info["nodes"]}, nps: {info["nps"]},'
-                      f' time: {float(info["time"]):.1f}', end='')
+                print(f'{score}, nodes: {info.get("nodes", "N/A")}, nps: {info.get("nps", "N/A")},'
+                      f' time: {float(info.get("time", "N/A")):.1f}', end='')
                 print()
 
                 for info in infos:

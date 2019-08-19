@@ -18,5 +18,11 @@
       "command": "$PYTHON -u xboard.py",
       "workingDirectory": "$FILE/../sunfish",
       "protocol": "xboard"
+   },
+   {
+      "name": "feeks",
+      "command": "$PYTHON -u main.py",
+      "workingDirectory": "$FILE/../feeks",
+      "protocol": "uci"
    }
 ]
