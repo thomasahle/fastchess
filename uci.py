@@ -55,9 +55,9 @@ class UCI:
             'UFormula': Type_Spin(default=0, min=0, max=4),
 
             # Legal moves will get at least this policy score
-            'LegalPolicyTreshold': Type_Spin(default=1, min=0, max=100),
-            'CapturePolicyTreshold': Type_Spin(default=2, min=0, max=100),
-            'CheckPolicyTreshold': Type_Spin(default=2, min=0, max=100),
+            'LegalPolicyTreshold': Type_Spin(default=1, min=-100, max=100),
+            'CapturePolicyTreshold': Type_Spin(default=2, min=-100, max=100),
+            'CheckPolicyTreshold': Type_Spin(default=2, min=-100, max=100),
 
             # TODO: Leela has many interesting options that we may consider, like
             # fpu-value (We use -.99), fpu-at-root (they use 1), policy-softmax-temp
