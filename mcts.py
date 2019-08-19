@@ -10,7 +10,7 @@ from fastchess import mirror_move
 from collections import namedtuple
 
 
-Args = namedtuple('MctsArgs', ['model', 'debug', 'cpuct'])
+Args = namedtuple('MctsArgs', ['model', 'debug', 'cpuct', 'legal_t', 'cap_t', 'chk_t'])
 
 
 class Node:
@@ -74,7 +74,13 @@ class Node:
         # If second visit, expand children
         if self.N == 2:
             for p, move in self.args.model.get_clean_moves(
-                    self.board, self.vec, debug=self.args.debug):
+                    self.board,
+                    self.vec,
+                    debug=self.args.debug,
+                    legal_t=self.args.legal_t,
+                    cap_t=self.args.cap_t,
+                    chk_t=self.args.chk_t,
+                    ):
                 self.children.append(Node(self.board, self.vec, move, p, self.args))
 
         # Find best child (small optimization, since this is actually a bottle neck)

@@ -225,7 +225,7 @@ class Model:
         vec += self.piece_to_vec[move.promotion or piece_type, color, move.to_square]
         return vec
 
-    def get_clean_moves(self, board, vec, bonus=1, cap_bonus=1, chk_bonus=1, debug=False):
+    def get_clean_moves(self, board, vec, legal_t=1, cap_t=2, chk_t=2, debug=False):
         ''' Returns a list of (prior, move) pairs containing all legal moves. '''
         moves = []
         scores = []
@@ -244,18 +244,24 @@ class Model:
         # self.model.top_k(self.vec)
         for m in board.legal_moves:
             moves.append(m)
-            cap = board.is_capture(m)
-            # TODO: There might be a faster way, inspired by the is_into_check method.
-            # or _attackers_mask. Some sort of pseudo-is-check should be sufficient.
-            board.push(m)
-            chk = board.is_check()
-            board.pop()
+            prior = vec[self.move_to_id[m if board.turn else mirror_move(m)]]
+
             # Hack: We make sure that checks and captures are always included,
             # and that no move has a completely non-existent prior.
-            prior = vec[self.move_to_id[m if board.turn else mirror_move(m)]]
             # Add some bonus for being a legal move and check or cap.
             # TODO: Maybe these values should be configurable, or max-based.
-            prior += bonus + chk_bonus * int(chk) + cap_bonus * int(cap)
+            if cap_t and board.is_capture(m):
+                prior = max(prior, cap_t)
+
+            # TODO: There might be a faster way, inspired by the is_into_check method.
+            # or _attackers_mask. Some sort of pseudo-is-check should be sufficient.
+            if chk_t:
+                board.push(m)
+                chk = board.is_check()
+                board.pop()
+                if chk:
+                    prior = max(prior, chk_t)
+
             scores.append(prior)
 
         # First entry keeps the word count

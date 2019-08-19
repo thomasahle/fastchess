@@ -1,13 +1,19 @@
 [
    {
       "name": "stockfish",
-      "command": "/usr/local/bin/stockfish",
+      "command": "stockfish",
       "protocol": "uci"
    },
    {
       "name": "fastchess",
-      "command": "$PYTHON -u uci.py model.bin",
+      "command": "$PYTHON -u uci.py",
       "workingDirectory": "$FILE",
       "protocol": "uci"
+   },
+   {
+      "name": "sunfish",
+      "command": "$PYTHON -u xboard.py",
+      "workingDirectory": "$FILE/../sunfish",
+      "protocol": "xboard"
    }
 ]

@@ -6,6 +6,7 @@ import time
 import sys
 import asyncio
 import pathlib
+import logging
 
 import fastchess
 
@@ -41,7 +42,8 @@ async def load_engine(engine_args, name, debug=False):
         _, engine = await chess.engine.popen_uci(cmd, **popen_args)
     elif args['protocol'] == 'xboard':
         _, engine = await chess.engine.popen_xboard(cmd, **popen_args)
-    engine.debug(debug)
+    if hasattr(engine, 'debug'):
+        engine.debug(debug)
     await engine.configure({opt['name']: opt['value'] for opt in args.get('options', [])})
     return engine
 
@@ -97,10 +99,15 @@ def print_unicode_board(board, perspective=chess.WHITE):
 
 
 async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
-    multipv = min(multipv, board.legal_moves.count())
+    # XBoard engine doesn't support multipv, and there python-chess doesn't support
+    # getting the first PV while playing a game.
+    if isinstance(engine, chess.engine.XBoardProtocol):
+        play_result = await engine.play(board, limit, game=game_id)
+        return play_result.move
 
+    multipv = min(multipv, board.legal_moves.count())
     with await engine.analysis(board, limit, game=game_id,
-                               info=chess.engine.INFO_ALL, multipv=max(1, multipv)) as analysis:
+                               info=chess.engine.INFO_ALL, multipv=multipv or None) as analysis:
 
         infos = [None for _ in range(multipv)]
         first = True
@@ -123,11 +130,10 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
 
                 info = analysis.info
                 score = info['score'].relative
-                score = f'Score: {score.score()}' if score.score(
-                ) is not None else f'Mate in {score.mate()}'
-                print(
-                    f'{score}, nodes: {info["nodes"]}, nps: {info["nps"]}, time: {float(info["time"]):.1f}',
-                    end='')
+                score = f'Score: {score.score()}' \
+                        if score.score() is not None else f'Mate in {score.mate()}'
+                print(f'{score}, nodes: {info["nodes"]}, nps: {info["nps"]},'
+                      f' time: {float(info["time"]):.1f}', end='')
                 print()
 
                 for info in infos:
@@ -135,8 +141,8 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
 
                     if 'score' in info:
                         score = info['score'].relative
-                        score = fastchess.cp_to_win(
-                            score.score()) if score.score() is not None else score.mate()
+                        score = fastchess.cp_to_win(score.score()) \
+                                if score.score() is not None else score.mate()
                         key, *val = info.get('string', '').split()
                         if key == 'pv_nodes':
                             nodes = int(val[0])
@@ -180,6 +186,9 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False):
 
 async def main():
     args = parser.parse_args()
+
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
 
     if not args.conf:
         path = pathlib.Path(__file__).parent / 'engines.json'

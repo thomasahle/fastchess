@@ -1,18 +1,20 @@
 import chess
 import sys
-import argparse
 import re
 import itertools
 from collections import namedtuple
 from enum import Enum
 import time
+import os.path
 
 import fastchess
 import mcts
 from controller import MCTS_Controller
 
-# Disable buffering
 
+# Disable buffering.
+# For some reason this is often not enough, so you might have to run uci.py
+# as `python -u uci.py` to really get unbuffered input/output.
 
 class Unbuffered(object):
     def __init__(self, stream):
@@ -28,6 +30,7 @@ class Unbuffered(object):
 
 
 sys.stdout = Unbuffered(sys.stdout)
+sys.stderr = open('log', 'a')
 
 
 # There is also chess.engine.Option
@@ -37,31 +40,12 @@ Type_Check = namedtuple('check', ['default'])
 Type_Button = namedtuple('button', [])
 Type_Combo = namedtuple('combo', ['default', 'vars'])
 
-parser = argparse.ArgumentParser()
-parser.add_argument('model_path', help='Location of fasttext model to use')
-parser.add_argument('-occ', action='store_true', help='Add -Occ features')
-
-# Migrated from play_chess
-# parser.add_argument('-rand', nargs='?', help='Play random moves from the posterior distribution to the 1/temp power.',
-# metavar='TEMP', const=1, default=0, type=float)
-# parser.add_argument('-debug', action='store_true',
-# help='Print all predicted labels')
-# parser.add_argument('-mcts', nargs='?', help='Play stronger (hopefully)',
-# metavar='ROLLS', const=800, default=1, type=int)
-#parser.add_argument('-occ', action='store_true', help='Add -Occ features')
-#parser.add_argument('-cache', action='store_true', help='Cache outputs from fasttext')
-# parser.add_argument('-profile', action='store_true',
-# help='Run profiling. (Only with selfplay)')
-
-
-sys.stderr = open('log', 'a')
-
-
 class UCI:
-    def __init__(self, args):
+    def __init__(self):
         self.debug = False
         self.board = chess.Board()
         self.option_types = {
+            'ModelPath': Type_String(default='model.bin'),
             # Play random moves from the posterior distribution to the temp/100 power.
             'Temperature': Type_Spin(default=0, min=0, max=100),
             'MultiPV': Type_Spin(default=0, min=0, max=10),
@@ -69,18 +53,31 @@ class UCI:
             'Cache': Type_Check(default=True),
             'PolicySoftmaxTemp': Type_Spin(default=100, min=1, max=10000),
             'UFormula': Type_Spin(default=0, min=0, max=4),
+
+            # Legal moves will get at least this policy score
+            'LegalPolicyTreshold': Type_Spin(default=1, min=0, max=100),
+            'CapturePolicyTreshold': Type_Spin(default=2, min=0, max=100),
+            'CheckPolicyTreshold': Type_Spin(default=2, min=0, max=100),
+
             # TODO: Leela has many interesting options that we may consider, like
             # fpu-value (We use -.99), fpu-at-root (they use 1), policy-softmax-temp
             # (somebody said 2.2 is a good value)
             # See https://github.com/LeelaChessZero/lc0/wiki/Lc0-options for more
+
+            # Migrated from play_chess
+            # parser.add_argument('-rand', nargs='?', help='Play random moves from the posterior distribution to the 1/temp power.',
+            # metavar='TEMP', const=1, default=0, type=float)
+            # parser.add_argument('-profile', action='store_true', help='Run profiling. (Only with selfplay)')
         }
         self.options = {key: val.default for key, val in self.option_types.items()
                         if hasattr(val, 'default')}
 
-        self.fastchess_model = fastchess.Model(args.model_path)
+        # These objects depend on options to be set. (ModelPath in particular.)
+        self.fastchess_model = None
         self.controller = None
-        self.setoption(None, None)  # Inits controller with default settings
+        self.setoption(None, None)
 
+        # Statistics for time management
         self.nps = 0
         self.roll_kldiv = 1
         self.tot_rolls = 0
@@ -178,10 +175,22 @@ class UCI:
 
     def setoption(self, name, value=None):
         self.options[name] = value
+
+        model_path = self.options.get('ModelPath')
+        if model_path and self.fastchess_model is None:
+            if not os.path.isfile(model_path):
+                print(f'error path {model_path} not found.')
+            else:
+                self.fastchess_model = fastchess.Model(self.options['ModelPath'])
+
         self.controller = MCTS_Controller(args=mcts.Args(
             model=self.fastchess_model,
             debug=self.debug,
-            cpuct=self.options['MilliCPUCT'] / 1000))
+            cpuct=self.options['MilliCPUCT'] / 1000,
+            legal_t=self.options['LegalPolicyTreshold'],
+            cap_t=self.options['CapturePolicyTreshold'],
+            chk_t=self.options['CheckPolicyTreshold'],
+            ))
 
     def position(self, board, moves):
         self.board = board
@@ -273,8 +282,7 @@ class UCI:
 
 
 def main():
-    args = parser.parse_args()
-    uci = UCI(args)
+    uci = UCI()
     while True:
         cmd = input()
         print('stderr', cmd, file=sys.stderr)
