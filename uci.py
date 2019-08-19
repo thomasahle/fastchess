@@ -79,6 +79,9 @@ class UCI:
 
         # Statistics for time management
         self.nps = 0
+        # TODO: The value of roll_kldiv should probably be set statically rather than
+        # dynamically as now, since it tends to fluctuate a lot, causing time management
+        # instabilities.
         self.roll_kldiv = 1
         self.tot_rolls = 0
 

@@ -71,7 +71,9 @@ class Node:
                 self.parent_vec.copy(), self.parent_board, self.move)
             # Don't copy the entire move stack, it just takes up memory.
             # We do need some though, to prevent repetition draws.
-            # Half-move clock is copied separately
+            # Half-move clock is copied separately.
+            # TODO: Some loops are longer than three moves. It would be nice to
+            # be able to copy until the last unrepeatable move.
             self.board = self.parent_board.copy(stack=3)
             self.board.push(self.move)
 

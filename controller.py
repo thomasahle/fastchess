@@ -86,9 +86,14 @@ class MCTS_Controller:
             if self.args.debug:
                 print('info string Creating new root node.')
 
-        # Print priors for new root node
-        if self.node.N < 2:
-            self.node.rollout()  # Ensure children are expanded
+        # If the node is a reused node and at a repeated position, it will think
+        # the game is over, but we still want it to continue playing.
+        self.node.game_over = False
+
+        # Print priors for new root node.
+        while self.node.N < 2:
+            # Ensure children are expanded
+            self.node.rollout()
         nodes = sorted(self.node.children, key=lambda n: n.P, reverse=True)[:7]
         print('info string priors', ', '.join(
             f'{board.san(n.move)} {n.P:.1%}' for n in nodes))
