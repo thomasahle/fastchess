@@ -241,34 +241,41 @@ class Model:
                 print(vec)
                 assert False
 
-        # TODO: Another approach is to use top_k to get the moves
-        #       and simply trust that they are legal.
+        # Filter out illegal moves.
+        # Another approach is to use top_k to get the moves and simply trust
+        # that they are legal.
         # self.model.top_k(self.vec)
+
         for m in board.legal_moves:
             moves.append(m)
             prior = vec[self.move_to_id[m if board.turn else mirror_move(m)]]
+            scores.append(prior)
+
+        # A fast text model is normalized.
+        # We keep the word count in the first entry.
+        n = vec[COUNT_INDEX]
+        scores = np.array(scores) / n
+
+        for i, m in enumerate(moves):
+            prior = scores[i]
+            prior = max(prior, legal_t)
 
             # Hack: We make sure that checks and captures are always included,
             # and that no move has a completely non-existent prior.
             # Add some bonus for being a legal move and check or cap.
-            # TODO: Maybe these values should be configurable, or max-based.
-            if cap_t and board.is_capture(m):
-                prior = max(prior, cap_t)
+            if cap_t > prior and board.is_capture(m):
+                prior = cap_t
 
             # TODO: There might be a faster way, inspired by the is_into_check method.
             # or _attackers_mask. Some sort of pseudo-is-check should be sufficient.
-            if chk_t:
+            if chk_t > prior:
                 board.push(m)
-                chk = board.is_check()
+                if board.is_check():
+                    prior = chk_t
                 board.pop()
-                if chk:
-                    prior = max(prior, chk_t)
 
-            scores.append(prior)
+            scores[i] = prior
 
-        # First entry keeps the word count
-        n = vec[COUNT_INDEX]
-        scores = np.array(scores) / n
         scores = np.exp(scores - np.max(scores))
         scores /= np.sum(scores)
         return zip(scores, moves)

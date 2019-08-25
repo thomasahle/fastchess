@@ -89,7 +89,7 @@ class Node:
                     legal_t=self.args.legal_t,
                     cap_t=self.args.cap_t,
                     chk_t=self.args.chk_t,
-                    ):
+            ):
                 self.children.append(Node(self.board, self.vec, move, p, self.args))
 
         # Find best child (small optimization, since this is actually a bottle neck)

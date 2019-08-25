@@ -4,5 +4,7 @@ __pycache__/
 data/*
 *.bin
 log
+*.log
+*.out
 *.pgn
 my_engines.json

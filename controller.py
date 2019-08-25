@@ -8,8 +8,10 @@ import itertools
 import fastchess
 import mcts
 
+# Controls how often we check for timeout, print pvs etc.
 STAT_INTERVAL = 100
-MIN_PV_VISITS = 100
+# Controls how often many visits a node needs to be included in our pvs.
+MIN_PV_VISITS = 30
 
 Stats = namedtuple('Stats', ['kl_div', 'rolls', 'elapsed'])
 
@@ -79,16 +81,15 @@ class MCTS_Controller:
                         print('info string Reusing node from ponder.')
                     break
 
-        # If we weren't able to find the board, make a new node
-        if not self.node or self.node.board != board:
+        # If we weren't able to find the board, make a new node.
+        # Note the node.children check: If the node is a reused node and
+        # at a repeated position, it will think the game is over, but we
+        # still want it to continue playing.
+        if not self.node or self.node.board != board or not self.node.children:
             vec = self.args.model.from_scratch(board)
             self.node = mcts.Node(board, vec, None, 0, self.args)
             if self.args.debug:
                 print('info string Creating new root node.')
-
-        # If the node is a reused node and at a repeated position, it will think
-        # the game is over, but we still want it to continue playing.
-        self.node.game_over = False
 
         # Print priors for new root node.
         while self.node.N < 2:

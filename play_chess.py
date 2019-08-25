@@ -142,7 +142,7 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
                     if 'score' in info:
                         score = info['score'].relative
                         score = fastchess.cp_to_win(score.score()) \
-                                if score.score() is not None else score.mate()
+                            if score.score() is not None else score.mate()
                         key, *val = info.get('string', '').split()
                         if key == 'pv_nodes':
                             nodes = int(val[0])
@@ -213,12 +213,13 @@ async def main():
 
     try:
         await play(engine, board, selfplay=args.selfplay, pvs=args.pvs, time_limit=limit, debug=args.debug)
-    except KeyboardInterrupt:
-        pass
     finally:
         print('\nGoodbye!')
         await engine.quit()
 
 
 asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    pass

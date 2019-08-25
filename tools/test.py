@@ -5,7 +5,7 @@ import pathlib
 
 def new_engine():
     python = '/usr/local/bin/python3'
-    d = pathlib.Path(__file__).parent
+    d = pathlib.Path(__file__).parent.parent
     args = [python, '-u', str(d / 'uci.py'), str(d / 'model.bin'), '-occ', '-debug']
     return chess.engine.SimpleEngine.popen_uci(args, debug=True)
 

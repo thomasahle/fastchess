@@ -40,6 +40,7 @@ Type_Check = namedtuple('check', ['default'])
 Type_Button = namedtuple('button', [])
 Type_Combo = namedtuple('combo', ['default', 'vars'])
 
+
 class UCI:
     def __init__(self):
         self.debug = False
@@ -49,25 +50,22 @@ class UCI:
             # Play random moves from the posterior distribution to the temp/100 power.
             'Temperature': Type_Spin(default=0, min=0, max=100),
             'MultiPV': Type_Spin(default=0, min=0, max=10),
-            'MilliCPUCT': Type_Spin(default=2000, min=0, max=1000000),
-            'Cache': Type_Check(default=True),
-            'PolicySoftmaxTemp': Type_Spin(default=100, min=1, max=10000),
-            'UFormula': Type_Spin(default=0, min=0, max=4),
+            # Cpuct 4.3 seems good with current treshold values. Previously 2.8 seemed
+            # better.
+            'MilliCPUCT': Type_Spin(default=4300, min=0, max=10000),
 
-            # Legal moves will get at least this policy score
-            'LegalPolicyTreshold': Type_Spin(default=1, min=-100, max=100),
-            'CapturePolicyTreshold': Type_Spin(default=2, min=-100, max=100),
-            'CheckPolicyTreshold': Type_Spin(default=2, min=-100, max=100),
+            # Legal moves will get at least this policy score/100
+            'LegalPolicyTreshold': Type_Spin(default=-3568, min=-10000, max=10000),
+            'CapturePolicyTreshold': Type_Spin(default=-1639, min=-10000, max=10000),
+            # Adding a bonus to moves that give check is currently not used, since
+            # tuning found it irrelevant with current models. It might still be
+            # usedful for sovling chess puzzles etc.
+            'CheckPolicyTreshold': Type_Spin(default=-10000, min=-10000, max=10000),
 
             # TODO: Leela has many interesting options that we may consider, like
             # fpu-value (We use -.99), fpu-at-root (they use 1), policy-softmax-temp
             # (somebody said 2.2 is a good value)
             # See https://github.com/LeelaChessZero/lc0/wiki/Lc0-options for more
-
-            # Migrated from play_chess
-            # parser.add_argument('-rand', nargs='?', help='Play random moves from the posterior distribution to the 1/temp power.',
-            # metavar='TEMP', const=1, default=0, type=float)
-            # parser.add_argument('-profile', action='store_true', help='Run profiling. (Only with selfplay)')
         }
         self.options = {key: val.default for key, val in self.option_types.items()
                         if hasattr(val, 'default')}
@@ -190,10 +188,10 @@ class UCI:
             model=self.fastchess_model,
             debug=self.debug,
             cpuct=self.options['MilliCPUCT'] / 1000,
-            legal_t=self.options['LegalPolicyTreshold'],
-            cap_t=self.options['CapturePolicyTreshold'],
-            chk_t=self.options['CheckPolicyTreshold'],
-            ))
+            legal_t=self.options['LegalPolicyTreshold'] / 100,
+            cap_t=self.options['CapturePolicyTreshold'] / 100,
+            chk_t=self.options['CheckPolicyTreshold'] / 100
+        ))
 
     def position(self, board, moves):
         self.board = board
@@ -235,10 +233,11 @@ class UCI:
                 min_kldiv = 0
             else:
                 # We allow a fair bit of extra time to try and allow the kl_div
-                # mechanism to really work.
-                max_time = min(2 * time_per_move, time_left / 2)
+                # mechanism to really work, but never more than half of our remaining
+                # time.
+                max_time = min(4 * time_per_move, time_left / 2)
                 mean_rolls = self.nps * time_per_move
-                min_kldiv = 1 / mean_rolls
+                min_kldiv = self.roll_kldiv / mean_rolls
 
         # See that some kind of condition has been set
         if not infinite and not (max_time or min_kldiv or max_rolls):
@@ -258,10 +257,12 @@ class UCI:
             else:
                 self.nps = stats.rolls / stats.elapsed
 
-            # Don't use discounting when guessing the constant C such that kl_div =
-            # C/rolls.
-            self.roll_kldiv = (stats.kl_div * stats.rolls**2 + self.roll_kldiv *
-                               self.tot_rolls) / (self.tot_rolls + stats.rolls)
+            # Don't use discounting when guessing the constant C such that  `kl_div = C/rolls`.
+            # TODO: Is a linear relationship reasonable? Why not just translate to
+            # time directly?
+            roll_kldiv = stats.kl_div * stats.rolls
+            self.roll_kldiv = (roll_kldiv * stats.rolls + self.roll_kldiv * self.tot_rolls) \
+                / (stats.rolls + self.tot_rolls)
             self.tot_rolls += stats.rolls
             print(
                 f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls} kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
@@ -270,11 +271,9 @@ class UCI:
         print(f'info pv {node.move.uci()}')
 
         parts = ['bestmove', node.move.uci()]
-
         if node.children:
             ponder_node = max(node.children, key=lambda n: n.N)
             parts += ['ponder', ponder_node.move.uci()]
-
         print(' '.join(parts))
 
     def stop(self):
