@@ -9,7 +9,7 @@ import fastchess
 import mcts
 
 # Controls how often we check for timeout, print pvs etc.
-STAT_INTERVAL = 100
+STAT_INTERVAL = 300
 # Controls how often many visits a node needs to be included in our pvs.
 MIN_PV_VISITS = 30
 

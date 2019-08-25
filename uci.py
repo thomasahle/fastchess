@@ -67,6 +67,8 @@ class UCI:
             # (somebody said 2.2 is a good value)
             # See https://github.com/LeelaChessZero/lc0/wiki/Lc0-options for more
         }
+        # UCI Options should be caseinsensitive
+        self.option_types = {key.lower(): val for key, val in self.option_types.items()}
         self.options = {key: val.default for key, val in self.option_types.items()
                         if hasattr(val, 'default')}
 
@@ -98,6 +100,8 @@ class UCI:
                 value = arg[i + len('value '):]
             else:
                 name = arg[len('name '):]
+            # UCI options are case insensitive
+            name = name.lower()
             opt = self.option_types.get(name)
             if not opt:
                 print(f'Did not understand option "{cmd}"', file=sys.stderr)
@@ -177,20 +181,20 @@ class UCI:
     def setoption(self, name, value=None):
         self.options[name] = value
 
-        model_path = self.options.get('ModelPath')
+        model_path = self.options.get('ModelPath'.lower())
         if model_path and self.fastchess_model is None:
             if not os.path.isfile(model_path):
                 print(f'error path {model_path} not found.')
             else:
-                self.fastchess_model = fastchess.Model(self.options['ModelPath'])
+                self.fastchess_model = fastchess.Model(self.options['ModelPath'.lower()])
 
         self.controller = MCTS_Controller(args=mcts.Args(
             model=self.fastchess_model,
             debug=self.debug,
-            cpuct=self.options['MilliCPUCT'] / 1000,
-            legal_t=self.options['LegalPolicyTreshold'] / 100,
-            cap_t=self.options['CapturePolicyTreshold'] / 100,
-            chk_t=self.options['CheckPolicyTreshold'] / 100
+            cpuct=self.options['MilliCPUCT'.lower()] / 1000,
+            legal_t=self.options['LegalPolicyTreshold'.lower()] / 100,
+            cap_t=self.options['CapturePolicyTreshold'.lower()] / 100,
+            chk_t=self.options['CheckPolicyTreshold'.lower()] / 100
         ))
 
     def position(self, board, moves):
@@ -246,9 +250,9 @@ class UCI:
         else:
             use_mcts = True
 
-        temp = self.options['Temperature'] / 100
+        temp = self.options['Temperature'.lower()] / 100
         node, stats = self.controller.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls,
-                                                max_time=max_time, temperature=temp, pvs=self.options['MultiPV'], use_mcts=use_mcts)
+                                                max_time=max_time, temperature=temp, pvs=self.options['MultiPV'.lower()], use_mcts=use_mcts)
 
         if use_mcts:
             # Conservative discounting using the harmonic mean

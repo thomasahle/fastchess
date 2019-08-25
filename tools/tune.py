@@ -1,26 +1,24 @@
-import chess.pgn
-import chess.engine
-import chess
-import matplotlib.pyplot as plt
-import numpy as np
 import math
 import hashlib
 import functools
 import logging
-import traceback
 import random
 import sys
 import json
 import pathlib
 import asyncio
 import argparse
-import skopt
 import warnings
+
+import chess.pgn
+import chess.engine
+import chess
+import numpy as np
+import skopt
+
 warnings.filterwarnings(
     'ignore',
     message='The objective has been evaluated at this point before.')
-
-plt.set_cmap("viridis")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-debug', action='store_true', help='Enable debugging of engine')
@@ -88,7 +86,7 @@ group.add_argument('-acq-optimizer', default='auto', help='Either "sampling" or 
 
 async def load_engine(engine_args, name, debug=False):
     args = next(a for a in engine_args if a['name'] == name)
-    curdir = str(pathlib.Path(__file__).parent)
+    curdir = str(pathlib.Path(__file__).parent.parent)
     popen_args = {}
     if 'workingDirectory' in args:
         popen_args['cwd'] = args['workingDirectory'].replace('$FILE', curdir)
@@ -106,7 +104,7 @@ async def load_engine(engine_args, name, debug=False):
 
 def load_conf(conf):
     if not conf:
-        path = pathlib.Path(__file__).parent / 'engines.json'
+        path = pathlib.Path(__file__).parent.parent / 'engines.json'
         if not path.is_file():
             print('Unable to locate engines.json file.')
             return
@@ -150,6 +148,9 @@ async def get_value(enginea, engineb, args, book, limit):
 
 
 def plot_optimizer(opt, lower, upper):
+    import matplotlib.pyplot as plt
+    plt.set_cmap("viridis")
+
     if not opt.models:
         print('Can not plot opt, since models do not exist yet.')
         return
@@ -172,6 +173,7 @@ def plot_optimizer(opt, lower, upper):
     # Adjust plot layout
     plt.grid()
     plt.legend(loc='best')
+    plt.show()
 
 
 def x_to_args(x, dim_names, options):
@@ -355,7 +357,6 @@ async def main():
 
         if len(dimensions) == 1:
             plot_optimizer(opt, dimensions[0].low, dimensions[0].high)
-            plt.show()
     else:
         print('Not enought data to summarize results.')
 
