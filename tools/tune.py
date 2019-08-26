@@ -338,7 +338,7 @@ async def main():
     if opt.Xi and opt.models:
         print('Summarizing best values')
         X = np.vstack((
-            opt.space.rvs(n_samples=args.n**2),
+            opt.space.rvs(n_samples=args.n),
             opt.Xi))
         Xt = opt.space.transform(X)
         y_pred, sigma = opt.models[-1].predict(Xt, return_std=True)
