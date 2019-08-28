@@ -44,6 +44,13 @@ class MCTS_Controller:
         else:
             print(f'info string kl -inf root_score {self.node.Q}')
 
+        if not pvs:
+            depth, node = 0, self.node
+            while node.children and node.N >= MIN_PV_VISITS:
+                depth, node = depth+1, max(node.children, key=lambda n: n.N)
+            print(f'info score cp {fastchess.win_to_cp(self.node.Q):.0f} depth {depth}'
+                  f' time {t*1000:.0f} nodes {self.node.N} nps {nps:.0f}')
+
         root = self.node
         real_pvs = min(pvs, len(root.children))
         root_children = sorted(root.children, key=lambda n: -n.N)
@@ -60,9 +67,8 @@ class MCTS_Controller:
 
             score = fastchess.win_to_cp(Q)
             extras = f'time {t*1000:.0f} nodes {self.node.N} nps {nps:.0f}' if i == 0 else ''
-            print(
-                f'info multipv {i+1} score cp {score:.0f} depth {len(pv)} {extras} pv {" ".join(pv)} string pv_nodes {N}')
-            # string pv_score  {score:.0f} pv_nodes {N}')
+            print(f'info multipv {i+1} score cp {score:.0f} depth {len(pv)} {extras}'
+                  f' pv {" ".join(pv)} string pv_nodes {N}')
         return kl_div
 
     def stop(self):

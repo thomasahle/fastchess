@@ -263,6 +263,9 @@ class Model:
             # Hack: We make sure that checks and captures are always included,
             # and that no move has a completely non-existent prior.
             # Add some bonus for being a legal move and check or cap.
+            # These are basically move extensions, like in classical engines.
+            # Maybe other extensions would be useful too, like passed pawn or
+            # recapture extensions: https://www.chessprogramming.org/Extensions
             if cap_t > prior and board.is_capture(m):
                 prior = cap_t
 

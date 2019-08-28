@@ -9,6 +9,7 @@ import pathlib
 import asyncio
 import argparse
 import warnings
+import itertools
 
 import chess.pgn
 import chess.engine
@@ -46,6 +47,7 @@ group.add_argument(
 subgroup = group.add_mutually_exclusive_group(required=True)
 subgroup.add_argument('-movetime', type=int, help='Time per move in ms')
 subgroup.add_argument('-nodes', type=int, help='Nodes per move')
+subgroup.add_argument('-max-len', type=int, default=10000, help='Maximum length of game in plies before termination.')
 
 group = parser.add_argument_group('Options to tune')
 group.add_argument(
@@ -113,30 +115,23 @@ def load_conf(conf):
         return json.load(open(conf))
 
 
-async def get_value(enginea, engineb, args, book, limit):
+async def get_value(enginea, engineb, args, book, limit, max_len):
     # We configure enginea. Engineb is simply our opponent
     enginea.id['args'] = args
     engineb.id['args'] = {}
-    await enginea.configure(args)
+    try:
+        await enginea.configure(args)
+    except chess.engine.EngineError as e:
+        print(f'Unable to start game {e}')
+        return [], 0
     score = 0
     games = []
-    init_board = board = random.choice(book)
+    error = None
+    init_board = random.choice(book)
     for i in range(2):
         white, black = (enginea, engineb) if i % 2 == 0 else (engineb, enginea)
-        board = init_board.copy()
-        # TODO: Stop games earlier when big advantage or low score for long
-        for ply in range(int(board.turn == chess.BLACK), 160):
-            if not board.is_game_over(claim_draw=True):
-                play = await (white, black)[ply % 2].play(board, limit, game=i)
-                board.push(play.move)
-        result = board.result(claim_draw=True)
-        if result == '1-0' and i % 2 == 0 or result == '0-1' and i % 2 == 1:
-            score += 1
-        if result == '1-0' and i % 2 == 1 or result == '0-1' and i % 2 == 0:
-            score -= 1
-        game = chess.pgn.Game.from_board(board)
-        game.headers.update({
-            'Event': 'Tuning',
+        game = chess.pgn.Game({
+            'Event': 'Tune.py',
             'White': white.id['name'],
             'WhiteArgs': repr(white.id['args']),
             'Black': black.id['name'],
@@ -144,7 +139,63 @@ async def get_value(enginea, engineb, args, book, limit):
             'Round': i
         })
         games.append(game)
-    return games, score
+        # Add book moves
+        game.setup(init_board.root())
+        node = game
+        for move in init_board.move_stack:
+            node = node.add_variation(move, comment='book')
+        board = node.board()
+        # Run engines
+        try:
+            for ply in itertools.count(int(board.turn == chess.BLACK)):
+                # TODO: Add options for stopping games earlier when a player has a
+                #       big advantage or low score for long.
+                if ply > max_len:
+                    game.headers.update({
+                        'Result': '1/2-1/2',
+                        'Termination': 'adjudication'
+                    })
+                    break
+                if board.is_game_over(claim_draw=True):
+                    result = board.result(claim_draw=True)
+                    if result == '1-0' and i % 2 == 0 or result == '0-1' and i % 2 == 1:
+                        score += 1
+                    if result == '1-0' and i % 2 == 1 or result == '0-1' and i % 2 == 0:
+                        score -= 1
+                    break
+                # Try to actually make a move
+                play = await (white, black)[ply % 2].play(board, limit, game=i,
+                        info = chess.engine.INFO_BASIC | chess.engine.INFO_SCORE)
+                if play.resigned:
+                    game.headers.update({'Result': ('0-1', '1-0')[ply%2]})
+                    node.comment += ('White','Black')[ply%2] + ' resgined'
+                    score += -1 if ply%2 == 0 else 1
+                    break
+                print(play.info)
+                node = node.add_variation(play.move, comment=
+                        f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
+                        f' {play.info.get("time",0)}s')
+                board = node.board()
+        except asyncio.CancelledError as e:
+            # We should get CancelledError when the user pressed Ctrl+C
+            game.headers.update({'Result': '*', 'Termination': 'unterminated'})
+            node.comment += '; Game was cancelled'
+            await asyncio.wait([enginea.quit(), engineb.quit()])
+            error = e
+            break
+        except chess.engine.EngineError as e:
+            game.headers.update({'Result': ('0-1', '1-0')[ply%2], 'Termination': 'error'})
+            node.comment += '; ' + ('White','Black')[ply%2] + ' terminated'
+            score += -1 if ply%2 == 0 else 1
+            await asyncio.wait([enginea.quit(), engineb.quit()])
+            error = e
+            break
+        except:
+            game.headers.update({'Result': '*', 'Termination': 'error'})
+            node.comment += '; Unexpected error'
+            await asyncio.wait([enginea.quit(), engineb.quit()])
+            raise
+    return games, score, error
 
 
 def plot_optimizer(opt, lower, upper):
@@ -185,14 +236,15 @@ def x_to_args(x, dim_names, options):
     return args
 
 
-async def run(opt, engines, book, limit, dim_names, concurrency, n_games, options):
-    completed = 0
+async def run(opt, engines, book, limit, max_len, dim_names, concurrency, n_games, options):
     started = 0
     queue = asyncio.Queue()
 
     def start_new(conc_id, x=None):
         nonlocal started
         if started >= n_games:
+            # Indicate that this `thread` has now completed.
+            queue.put_nowait(None)
             return
         started += 1
         if x is None:
@@ -201,40 +253,48 @@ async def run(opt, engines, book, limit, dim_names, concurrency, n_games, option
         print(f'Starting game {started}/{n_games} with {args}')
         enginea, engineb = engines[conc_id]
         task = asyncio.create_task(get_value(
-            enginea, engineb, args, book, limit))
+            enginea, engineb, args, book, limit, max_len))
         task.add_done_callback(functools.partial(on_done, x, conc_id))
 
     def on_done(x, conc_id, task):
         if task.cancelled():
             logging.debug('Task was cancelled.')
-            queue.put_nowait(None)
-            # We only get cancelled when we're supposed to shut down,
-            # so no reason to start a new loop.
-            return
+            # We should never get here, since we catch cancelled errors.
         elif task.exception():
-            print('Error while excecuting game')
+            logging.error('Error while excecuting game')
             task.print_stack()
-            queue.put_nowait(None)
         else:
-            games, y = task.result()
-            opt.tell(x, -y)  # opt is minimizing
-            queue.put_nowait((games, x, y))
-
-        start_new(conc_id)
+            # We add the result to the queue ourselves, since if we are cancelled our
+            # return value doesn't get saved in the task.
+            games, y, error = task.result()
+            queue.put_nowait((games, x, y, error))
+            if not error:
+                opt.tell(x, -y)  # opt is minimizing
+                start_new(conc_id)
+                return
+            else:
+                assert type(error) in (asyncio.CancelledError, KeyboardInterrupt)
+                pass
+        # Indicate that this `thread` has now died.
+        queue.put_nowait(None)
 
     # If all threads call opt.ask at the same time, we risk them all getting
     # the same response. Hence we coordinate the initals asks.
     for conc_id, x_init in enumerate(opt.ask(concurrency)):
         start_new(conc_id, x_init)
 
-    try:
-        for _ in range(n_games):
+    completed = 0
+    while completed < concurrency:
+        res = None
+        try:
             res = await queue.get()
-            if res:
-                yield res
-    except asyncio.CancelledError:
-        print('Cancelled')
-        return
+        except asyncio.CancelledError:
+            # We ignore cancels here so the games may be returned.
+            pass
+        if res:
+            yield res
+        else:
+            completed += 1
 
 
 async def main():
@@ -326,10 +386,13 @@ async def main():
         nodes=args.nodes,
         time=args.movetime and args.movetime / 1000)
 
-    async for games, x, y in run(opt, engines, book, limit, dim_names, args.concurrency, args.n - cached_games, options):
+    async for games, x, y, er in run(opt, engines, book, limit, args.max_len, dim_names, args.concurrency, args.n - cached_games, options):
         for game in games:
             print(game, file=games_file, flush=True)
-        print(x, '=>', y)
+        # If the game had an error, we only want to save it to pgn. Not have its result
+        # influence the optimized score.
+        if not er:
+            print(x, '=>', y)
         if log_file:
             x = [xi if type(xi) == str else float(xi) for xi in x]
             y = float(y)

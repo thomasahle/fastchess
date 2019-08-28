@@ -14,6 +14,24 @@
       ]
    },
    {
+      "name": "fastchess2",
+      "command": "$PYTHON -u uci.py",
+      "workingDirectory": "$FILE",
+      "protocol": "uci",
+      "options": [
+         {"name": "ModelPath", "value": "models/model2.bin"}
+      ]
+   },
+   {
+      "name": "fastchess3",
+      "command": "$PYTHON -u uci.py",
+      "workingDirectory": "$FILE",
+      "protocol": "uci",
+      "options": [
+         {"name": "ModelPath", "value": "models/model3.bin"}
+      ]
+   },
+   {
       "name": "sunfish",
       "command": "$PYTHON -u xboard.py",
       "workingDirectory": "$FILE/../sunfish",

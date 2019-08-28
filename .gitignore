@@ -7,4 +7,5 @@ log
 *.log
 *.out
 *.pgn
+*.gz
 my_engines.json
