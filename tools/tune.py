@@ -171,7 +171,6 @@ async def get_value(enginea, engineb, args, book, limit, max_len):
                     node.comment += ('White','Black')[ply%2] + ' resgined'
                     score += -1 if ply%2 == 0 else 1
                     break
-                print(play.info)
                 node = node.add_variation(play.move, comment=
                         f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
                         f' {play.info.get("time",0)}s')
