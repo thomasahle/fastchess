@@ -427,6 +427,9 @@ async def main():
 
 asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
 try:
-    asyncio.run(main())
+    if hasattr(asyncio, 'run'):
+        asyncio.run(main())
+    else:
+        asyncio.get_event_loop().run_until_complete(main())
 except KeyboardInterrupt:
     logging.debug('KeyboardInterrupt at root')
