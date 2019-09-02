@@ -318,7 +318,7 @@ def parse_options(opts, copts, engine_options):
     for name, *categories in copts:
         opt = engine_options.get(name)
         if not opt:
-            if not categoriese:
+            if not categories:
                 print(f'Error: engine has no option {name}. For hidden options'
                       ' you must manually specify possible values.')
                 continue
@@ -382,7 +382,7 @@ async def main():
         n_initial_points=args.n_initial_points,
         acq_func=args.acq_func,
         acq_optimizer=args.acq_optimizer,
-        #acq_func_kwargs={'noise': 1}
+        #acq_func_kwargs={'noise': 10}
     )
 
     if args.games_file:
