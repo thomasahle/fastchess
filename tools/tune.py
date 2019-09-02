@@ -444,7 +444,7 @@ async def main():
                 context, x, game_id = task.tune_context, task.tune_x, task.tune_game_id
                 games, y, er = res
                 for game in games:
-                    print(game, file=games_file, flush=True)
+                    print(game, end='\n\n', file=games_file, flush=True)
                 if er:
                     print('Game erred:', er, type(er))
                     continue
