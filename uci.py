@@ -28,9 +28,37 @@ class Unbuffered(object):
     def __getattr__(self, attr):
         return getattr(self.stream, attr)
 
-
 sys.stdout = Unbuffered(sys.stdout)
 sys.stderr = open('log', 'a')
+
+
+class CaseInsensitiveDict(dict):
+    def __init__(self, *args, **kwargs):
+        super(CaseInsensitiveDict, self).__init__(*args, **kwargs)
+        self._convert_keys()
+    def __getitem__(self, key):
+        return super(CaseInsensitiveDict, self).__getitem__(key.lower())
+    def __setitem__(self, key, value):
+        super(CaseInsensitiveDict, self).__setitem__(key.lower(), value)
+    def __delitem__(self, key):
+        return super(CaseInsensitiveDict, self).__delitem__(key.lower())
+    def __contains__(self, key):
+        return super(CaseInsensitiveDict, self).__contains__(key.lower())
+    def has_key(self, key):
+        return super(CaseInsensitiveDict, self).has_key(key.lower())
+    def pop(self, key, *args, **kwargs):
+        return super(CaseInsensitiveDict, self).pop(key.lower(), *args, **kwargs)
+    def get(self, key, *args, **kwargs):
+        return super(CaseInsensitiveDict, self).get(key.lower(), *args, **kwargs)
+    def setdefault(self, key, *args, **kwargs):
+        return super(CaseInsensitiveDict, self).setdefault(key.lower(), *args, **kwargs)
+    def update(self, E={}, **F):
+        super(CaseInsensitiveDict, self).update(self.__class__(E))
+        super(CaseInsensitiveDict, self).update(self.__class__(**F))
+    def _convert_keys(self):
+        for k in list(self.keys()):
+            v = super(CaseInsensitiveDict, self).pop(k)
+            self.__setitem__(k, v)
 
 
 # There is also chess.engine.Option
@@ -67,13 +95,13 @@ class UCI:
             # (somebody said 2.2 is a good value)
             # See https://github.com/LeelaChessZero/lc0/wiki/Lc0-options for more
         }
-        self.options = {key: val.default for key, val in self.option_types.items()
-                        if hasattr(val, 'default')}
+        self.options = CaseInsensitiveDict({key: val.default for key, val
+                in self.option_types.items() if hasattr(val, 'default')})
 
         # These objects depend on options to be set. (ModelPath in particular.)
         self.fastchess_model = None
         self.controller = None
-        self.setoption(None, None)
+        self.setoption('', '')
 
         # Statistics for time management
         self.nps = 0
@@ -99,9 +127,9 @@ class UCI:
             else:
                 name = arg[len('name '):]
             # UCI options are case insensitive
-            opt = self.option_types.get(name)
+            opt = CaseInsensitiveDict(self.option_types).get(name)
             if not opt:
-                print(f'Did not understand option "{cmd}"', file=sys.stderr)
+                print(f'Did not recognize option "{name}"', file=sys.stderr)
             elif type(opt) == Type_Spin:
                 value = int(value)
             elif type(opt) == Type_Check:
