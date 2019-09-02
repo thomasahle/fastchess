@@ -407,62 +407,63 @@ async def main():
         time=args.movetime and args.movetime / 1000)
 
     # Run tasks concurrently
-    started = cached_games
-
-    def on_done(task):
-        if task.exception():
-            logging.error('Error while excecuting game')
-            task.print_stack()
-
-    def new_game(context):
-        x = opt.ask()
-        engine_args = x_to_args(x, dim_names, options)
-        print(f'Starting game {started}/{args.n} with {engine_args}')
-        task = asyncio.create_task(
-            get_value(
-                context,
-                random.choice(book),
-                engine_args,
-                started))
-        # We tag the task with some attributes that we need when it finishes.
-        setattr(task, 'tune_x', x)
-        setattr(task, 'tune_context', context)
-        setattr(task, 'tune_game_id', started)
-        task.add_done_callback(on_done)
-        return task
-    tasks = []
-    xs = opt.ask(min(args.concurrency, args.n - started)) if args.n - started > 0 else []
-    for conc_id, x_init in enumerate(xs):
-        enginea, engineb = engines[conc_id]
-        context = Context(enginea, engineb, limit, args.max_len)
-        tasks.append(new_game(context))
-        started += 1
-    while tasks:
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        tasks = list(pending)
-        for task in done:
-            res = task.result()
-            context, x, game_id = task.tune_context, task.tune_x, task.tune_game_id
-            games, y, er = res
-            for game in games:
-                print(game, file=games_file, flush=True)
-            if er:
-                print('Game erred:', er, type(er))
-                continue
-            opt.tell(x, -y)  # opt is minimizing
-            # Delete old models to save space. Note hat for the first 10
-            # tells no model is created, as we sare still just querying at
-            # random.
-            logging.debug(f'Number of models {len(opt.models)}')
-            if len(opt.models) > 1:
-                del opt.models[0]
-            results = ', '.join(g.headers['Result'] for g in games)
-            print(f'Finished game {game_id} {x} => {y} ({results})')
-            if data_logger:
-                data_logger.store(x, y)
-            if started < args.n:
-                tasks.append(new_game(context))
-                started += 1
+    try:
+        started = cached_games
+        def on_done(task):
+            if task.exception():
+                logging.error('Error while excecuting game')
+                task.print_stack()
+        def new_game(context):
+            x = opt.ask()
+            engine_args = x_to_args(x, dim_names, options)
+            print(f'Starting game {started}/{args.n} with {engine_args}')
+            task = asyncio.create_task(
+                get_value(
+                    context,
+                    random.choice(book),
+                    engine_args,
+                    started))
+            # We tag the task with some attributes that we need when it finishes.
+            setattr(task, 'tune_x', x)
+            setattr(task, 'tune_context', context)
+            setattr(task, 'tune_game_id', started)
+            task.add_done_callback(on_done)
+            return task
+        tasks = []
+        xs = opt.ask(min(args.concurrency, args.n - started)) if args.n - started > 0 else []
+        for conc_id, x_init in enumerate(xs):
+            enginea, engineb = engines[conc_id]
+            context = Context(enginea, engineb, limit, args.max_len)
+            tasks.append(new_game(context))
+            started += 1
+        while tasks:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            tasks = list(pending)
+            for task in done:
+                res = task.result()
+                context, x, game_id = task.tune_context, task.tune_x, task.tune_game_id
+                games, y, er = res
+                for game in games:
+                    print(game, file=games_file, flush=True)
+                if er:
+                    print('Game erred:', er, type(er))
+                    continue
+                opt.tell(x, -y)  # opt is minimizing
+                # Delete old models to save space. Note hat for the first 10
+                # tells no model is created, as we sare still just querying at
+                # random.
+                logging.debug(f'Number of models {len(opt.models)}')
+                if len(opt.models) > 1:
+                    del opt.models[0]
+                results = ', '.join(g.headers['Result'] for g in games)
+                print(f'Finished game {game_id} {x} => {y} ({results})')
+                if data_logger:
+                    data_logger.store(x, y)
+                if started < args.n:
+                    tasks.append(new_game(context))
+                    started += 1
+    except asyncio.CancelledError:
+        pass
 
     if opt.Xi and opt.models:
         print('Summarizing best values')
