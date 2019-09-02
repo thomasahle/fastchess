@@ -10,6 +10,7 @@ import asyncio
 import argparse
 import warnings
 import itertools
+from collections import namedtuple
 
 import chess.pgn
 import chess.engine
@@ -47,7 +48,11 @@ group.add_argument(
 subgroup = group.add_mutually_exclusive_group(required=True)
 subgroup.add_argument('-movetime', type=int, help='Time per move in ms')
 subgroup.add_argument('-nodes', type=int, help='Nodes per move')
-subgroup.add_argument('-max-len', type=int, default=10000, help='Maximum length of game in plies before termination.')
+subgroup.add_argument(
+    '-max-len',
+    type=int,
+    default=10000,
+    help='Maximum length of game in plies before termination.')
 
 group = parser.add_argument_group('Options to tune')
 group.add_argument(
@@ -82,7 +87,11 @@ group.add_argument(
 group.add_argument(
     '-acq-func',
     default='gp_hedge',
-    help='Can be either of "LCB" for lower confidence bound.  "EI" for negative expected improvement.  "PI" for negative probability of improvement.  "gp_hedge" Probabilistically choose one of the above three acquisition functions at every iteration.')
+    help='Can be either of "LCB" for lower confidence bound.'
+         ' "EI" for negative expected improvement.'
+         ' "PI" for negative probability of improvement.'
+         ' "gp_hedge" (default) Probabilistically choose one of the above'
+         ' three acquisition functions at every iteration.')
 group.add_argument('-acq-optimizer', default='auto', help='Either "sampling" or "lbfgs"')
 
 
@@ -115,7 +124,12 @@ def load_conf(conf):
         return json.load(open(conf))
 
 
-async def get_value(enginea, engineb, args, book, limit, max_len):
+Context = namedtuple('Context', 'enginea engineb limit max_len')
+GAMES_PLAYED = 2  # Number of games played with a given book
+
+
+async def get_value(context, init_board, args, game_id):
+    enginea, engineb, limit, max_len = context
     # We configure enginea. Engineb is simply our opponent
     enginea.id['args'] = args
     engineb.id['args'] = {}
@@ -127,8 +141,7 @@ async def get_value(enginea, engineb, args, book, limit, max_len):
     score = 0
     games = []
     error = None
-    init_board = random.choice(book)
-    for i in range(2):
+    for i in range(GAMES_PLAYED):
         white, black = (enginea, engineb) if i % 2 == 0 else (engineb, enginea)
         game = chess.pgn.Game({
             'Event': 'Tune.py',
@@ -136,7 +149,7 @@ async def get_value(enginea, engineb, args, book, limit, max_len):
             'WhiteArgs': repr(white.id['args']),
             'Black': black.id['name'],
             'BlackArgs': repr(black.id['args']),
-            'Round': i
+            'Round': GAMES_PLAYED * game_id + i
         })
         games.append(game)
         # Add book moves
@@ -144,10 +157,10 @@ async def get_value(enginea, engineb, args, book, limit, max_len):
         node = game
         for move in init_board.move_stack:
             node = node.add_variation(move, comment='book')
-        board = node.board()
         # Run engines
         try:
-            for ply in itertools.count(int(board.turn == chess.BLACK)):
+            for ply in itertools.count(int(node.board().turn == chess.BLACK)):
+                board = node.board()
                 # TODO: Add options for stopping games earlier when a player has a
                 #       big advantage or low score for long.
                 if ply > max_len:
@@ -162,20 +175,21 @@ async def get_value(enginea, engineb, args, book, limit, max_len):
                         score += 1
                     if result == '1-0' and i % 2 == 1 or result == '0-1' and i % 2 == 0:
                         score -= 1
+                    game.headers["Result"] = result
                     break
                 # Try to actually make a move
-                play = await (white, black)[ply % 2].play(board, limit, game=i,
-                        info = chess.engine.INFO_BASIC | chess.engine.INFO_SCORE)
+                play = await (white, black)[ply % 2].play(
+                    board, limit, game=GAMES_PLAYED * game_id + i,
+                    info=chess.engine.INFO_BASIC | chess.engine.INFO_SCORE)
                 if play.resigned:
-                    game.headers.update({'Result': ('0-1', '1-0')[ply%2]})
-                    node.comment += ('White','Black')[ply%2] + ' resgined'
-                    score += -1 if ply%2 == 0 else 1
+                    game.headers.update({'Result': ('0-1', '1-0')[ply % 2]})
+                    node.comment += f'; {("White","Black")[ply%2]} resgined'
+                    score += -1 if (i + ply) % 2 == 0 else 1
                     break
-                node = node.add_variation(play.move, comment=
-                        f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
-                        f' {play.info.get("time",0)}s')
-                board = node.board()
-        except asyncio.CancelledError as e:
+                node = node.add_variation(play.move, comment=f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
+                                          f' {play.info.get("time",0)}s')
+        except (asyncio.CancelledError, KeyboardInterrupt) as e:
+            print('get_value Cancelled')
             # We should get CancelledError when the user pressed Ctrl+C
             game.headers.update({'Result': '*', 'Termination': 'unterminated'})
             node.comment += '; Game was cancelled'
@@ -183,13 +197,14 @@ async def get_value(enginea, engineb, args, book, limit, max_len):
             error = e
             break
         except chess.engine.EngineError as e:
-            game.headers.update({'Result': ('0-1', '1-0')[ply%2], 'Termination': 'error'})
-            node.comment += '; ' + ('White','Black')[ply%2] + ' terminated'
-            score += -1 if ply%2 == 0 else 1
-            await asyncio.wait([enginea.quit(), engineb.quit()])
+            game.headers.update(
+                {'Result': ('0-1', '1-0')[ply % 2], 'Termination': 'error'})
+            node.comment += f'; {("White","Black")[ply%2]} terminated: {e}'
+            score += -1 if ply % 2 == 0 else 1
+            # await asyncio.wait([enginea.quit(), engineb.quit()])
             error = e
             break
-        except:
+        except BaseException:
             game.headers.update({'Result': '*', 'Termination': 'error'})
             node.comment += '; Unexpected error'
             await asyncio.wait([enginea.quit(), engineb.quit()])
@@ -235,65 +250,105 @@ def x_to_args(x, dim_names, options):
     return args
 
 
-async def run(opt, engines, book, limit, max_len, dim_names, concurrency, n_games, options):
-    started = 0
-    queue = asyncio.Queue()
+class DataLogger:
+    def __init__(self, path, key):
+        self.path = path
+        self.key = key
+        self.append_file = None
 
-    def start_new(conc_id, x=None):
-        nonlocal started
-        if started >= n_games:
-            # Indicate that this `thread` has now completed.
-            queue.put_nowait(None)
-            return
-        started += 1
-        if x is None:
-            x = opt.ask()
-        args = x_to_args(x, dim_names, options)
-        print(f'Starting game {started}/{n_games} with {args}')
-        enginea, engineb = engines[conc_id]
-        task = asyncio.create_task(get_value(
-            enginea, engineb, args, book, limit, max_len))
-        task.add_done_callback(functools.partial(on_done, x, conc_id))
+    def load(self, opt):
+        if not self.path.is_file():
+            print(f'Unable to open {self.path}')
+            return 0
+        print(f'Reading {self.path}')
+        xs, ys = [], []
+        with self.path.open('r') as file:
+            for line in file:
+                obj = json.loads(line)
+                if obj.get('args') == self.key:
+                    x, y = obj['x'], obj['y']
+                    print(f'Using {x} => {y} from log-file')
+                    try:
+                        xs.append(x)
+                        ys.append(-y)
+                    except ValueError as e:
+                        print('Ignoring bad data point', e)
+        # Fit the first model, but because of a bug the lists can't be empty.
+        if xs:
+            print('Fitting first model')
+            opt.tell(xs, ys, fit=True)
+        return len(xs)
 
-    def on_done(x, conc_id, task):
-        if task.cancelled():
-            logging.debug('Task was cancelled.')
-            # We should never get here, since we catch cancelled errors.
-        elif task.exception():
-            logging.error('Error while excecuting game')
-            task.print_stack()
-        else:
-            # We add the result to the queue ourselves, since if we are cancelled our
-            # return value doesn't get saved in the task.
-            games, y, error = task.result()
-            queue.put_nowait((games, x, y, error))
-            if not error:
-                opt.tell(x, -y)  # opt is minimizing
-                start_new(conc_id)
-                return
+    def store(self, x, y):
+        if not self.append_file:
+            self.append_file = self.path.open('a')
+        x = [xi if type(xi) == str else float(xi) for xi in x]
+        y = float(y)
+        print(json.dumps({'args': self.key, 'x': x, 'y': y}),
+              file=self.append_file, flush=True)
+
+
+def load_book(path, n_book):
+    if not path.is_file():
+        print(f'Error: Can\'t open book {path}.')
+        return
+    with open(path, encoding='latin-1') as file:
+        for game in iter((lambda: chess.pgn.read_game(file)), None):
+            board = game.board()
+            for _, move in zip(range(n_book), game.mainline_moves()):
+                board.push(move)
+            yield board
+
+
+def parse_options(opts, copts, engine_options):
+    dim_names = []
+    dimensions = []
+    for name, *lower_upper in opts:
+        opt = engine_options.get(name)
+        if not opt:
+            if not lower_upper:
+                print(f'Error: engine has no option {name}. For hidden options'
+                      ' you must specify lower and upper bounds.')
+                continue
             else:
-                assert type(error) in (asyncio.CancelledError, KeyboardInterrupt)
-                pass
-        # Indicate that this `thread` has now died.
-        queue.put_nowait(None)
+                print(f'Warning: engine has no option {name}')
+        dim_names.append(name)
+        lower, upper = map(int, lower_upper) if lower_upper else (opt.min, opt.max)
+        dimensions.append(skopt.utils.Integer(lower, upper, name=name))
+    for name, *categories in copts:
+        opt = engine_options.get(name)
+        if not opt:
+            if not categoriese:
+                print(f'Error: engine has no option {name}. For hidden options'
+                      ' you must manually specify possible values.')
+                continue
+            else:
+                print(f'Warning: engine has no option {name}')
+        dim_names.append(name)
+        cats = categories or opt.var
+        cats = [opt.var.index(cat) for cat in cats]
+        dimensions.append(skopt.utils.Categorical(cats, name=name))
+    if not dimensions:
+        print('Warning: No options specified for tuning.')
+    return dim_names, dimensions
 
-    # If all threads call opt.ask at the same time, we risk them all getting
-    # the same response. Hence we coordinate the initals asks.
-    for conc_id, x_init in enumerate(opt.ask(concurrency)):
-        start_new(conc_id, x_init)
 
-    completed = 0
-    while completed < concurrency:
-        res = None
-        try:
-            res = await queue.get()
-        except asyncio.CancelledError:
-            # We ignore cancels here so the games may be returned.
-            pass
-        if res:
-            yield res
-        else:
-            completed += 1
+def summarize(opt, samples):
+    X = np.vstack((opt.space.rvs(n_samples=samples), opt.Xi))
+    Xt = opt.space.transform(X)
+    y_pred, sigma = opt.models[-1].predict(Xt, return_std=True)
+    y_pred = -y_pred  # Change to maximization
+    for kappa in range(4):
+        i = np.argmax(y_pred - kappa * sigma)
+
+        def score_to_elo(score):
+            return - 400 * math.log10(2 / (score + 1) - 1)
+        elo = score_to_elo(y_pred[i] / 2)
+        pm = max(abs(score_to_elo(y_pred[i] / 2 + sigma[i] / 2) - elo),
+                 abs(score_to_elo(y_pred[i] / 2 + sigma[i] / 2) - elo))
+        print(f'Best expectation (κ={kappa}): {X[i]}'
+              f' = {y_pred[i]/2:.3f} ± {sigma[i]/2:.3f}'
+              f' (ELO-diff {elo:.3f} ± {pm:.3f})')
 
 
 async def main():
@@ -301,16 +356,11 @@ async def main():
 
     book = []
     if args.book:
-        with open(args.book, encoding='latin-1') as file:
-            for game in iter((lambda: chess.pgn.read_game(file)), None):
-                board = game.board()
-                for _, move in zip(range(args.n_book), game.mainline_moves()):
-                    board.push(move)
-                book.append(board)
+        book.extend(load_book(args.book, args.n_book))
         print(f'Loaded book with {len(book)} positions')
-    else:
+    if not book:
         book.append(chess.Board())
-        print('Starting every game from initial position')
+        print('No book. Starting every game from initial position.')
 
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
@@ -324,27 +374,7 @@ async def main():
     options = engines[0][0].options
 
     print('Parsing options')
-    dim_names = []
-    dimensions = []
-    for name, *lower_upper in args.opt:
-        opt = options.get(name)
-        if not opt:
-            print(f'Error: engine has no option {name}')
-            continue
-        dim_names.append(name)
-        lower, upper = map(int, lower_upper) if lower_upper else (opt.min, opt.max)
-        dimensions.append(skopt.utils.Integer(lower, upper, name=name))
-    for name, *categories in args.c_opt:
-        opt = options.get(name)
-        if not opt:
-            print(f'Error: engine has no option {name}')
-            continue
-        dim_names.append(name)
-        cats = categories or opt.var
-        cats = [opt.var.index(cat) for cat in cats]
-        dimensions.append(skopt.utils.Categorical(cats, name=name))
-    if not dimensions:
-        print('Warning: No options specified for tuning.')
+    dim_names, dimensions = parse_options(args.opt, args.c_opt, options)
 
     opt = skopt.Optimizer(
         dimensions,
@@ -360,76 +390,104 @@ async def main():
     else:
         games_file = sys.stdout
 
-    cached_games = 0
     if args.log_file:
-        print(f'Reading {args.log_file}')
-        ahash = hashlib.sha256(repr(args).encode()).hexdigest()
-        if args.log_file.is_file():
-            with args.log_file.open('r') as file:
-                for line in file:
-                    obj = json.loads(line)
-                    if obj['ahash'] == ahash:
-                        x, y = obj['x'], obj['y']
-                        print(f'Using {x} => {y} from log-file')
-                        try:
-                            # Don't fit the model yet, since we aren't asking
-                            opt.tell(x, -y, fit=False)
-                            cached_games += 1
-                        except ValueError as e:
-                            print('Ignoring bad data point', e)
-        log_file = args.log_file.open('a')
+        key_args = args.__dict__.copy()
+        # Not all arguments change the results, so no need to keep them in the key.
+        for key in ('n', 'games_file', 'concurrency'):
+            del key_args[key]
+        key = repr(sorted(key_args.items())).encode()
+        data_logger = DataLogger(args.log_file, key=hashlib.sha256(key).hexdigest())
+        cached_games = data_logger.load(opt)
     else:
-        log_file = None
+        data_logger = None
+        cached_games = 0
 
     limit = chess.engine.Limit(
         nodes=args.nodes,
         time=args.movetime and args.movetime / 1000)
 
-    async for games, x, y, er in run(opt, engines, book, limit, args.max_len, dim_names, args.concurrency, args.n - cached_games, options):
-        for game in games:
-            print(game, file=games_file, flush=True)
-        # If the game had an error, we only want to save it to pgn. Not have its result
-        # influence the optimized score.
-        if not er:
-            print(x, '=>', y)
-        if log_file:
-            x = [xi if type(xi) == str else float(xi) for xi in x]
-            y = float(y)
-            print(json.dumps({'ahash': ahash, 'x': x, 'y': y}), file=log_file, flush=True)
+    # Run tasks concurrently
+    started = cached_games
+
+    def on_done(task):
+        if task.exception():
+            logging.error('Error while excecuting game')
+            task.print_stack()
+
+    def new_game(context):
+        x = opt.ask()
+        engine_args = x_to_args(x, dim_names, options)
+        print(f'Starting game {started}/{args.n} with {engine_args}')
+        task = asyncio.create_task(
+            get_value(
+                context,
+                random.choice(book),
+                engine_args,
+                started))
+        # We tag the task with some attributes that we need when it finishes.
+        setattr(task, 'tune_x', x)
+        setattr(task, 'tune_context', context)
+        setattr(task, 'tune_game_id', started)
+        task.add_done_callback(on_done)
+        return task
+    tasks = []
+    xs = opt.ask(min(args.concurrency, args.n - started)) if args.n - started > 0 else []
+    for conc_id, x_init in enumerate(xs):
+        enginea, engineb = engines[conc_id]
+        context = Context(enginea, engineb, limit, args.max_len)
+        tasks.append(new_game(context))
+        started += 1
+    while tasks:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        tasks = list(pending)
+        for task in done:
+            res = task.result()
+            context, x, game_id = task.tune_context, task.tune_x, task.tune_game_id
+            games, y, er = res
+            for game in games:
+                print(game, file=games_file, flush=True)
+            if er:
+                print('Game erred:', er, type(er))
+                continue
+            opt.tell(x, -y)  # opt is minimizing
+            # Delete old models to save space. Note hat for the first 10
+            # tells no model is created, as we sare still just querying at
+            # random.
+            logging.debug(f'Number of models {len(opt.models)}')
+            if len(opt.models) > 1:
+                del opt.models[0]
+            results = ', '.join(g.headers['Result'] for g in games)
+            print(f'Finished game {game_id} {x} => {y} ({results})')
+            if data_logger:
+                data_logger.store(x, y)
+            if started < args.n:
+                tasks.append(new_game(context))
+                started += 1
 
     if opt.Xi and opt.models:
         print('Summarizing best values')
-        X = np.vstack((
-            opt.space.rvs(n_samples=args.n),
-            opt.Xi))
-        Xt = opt.space.transform(X)
-        y_pred, sigma = opt.models[-1].predict(Xt, return_std=True)
-        y_pred = -y_pred # Change to maximization
-        for kappa in range(4):
-            i = np.argmax(y_pred - kappa * sigma)
-
-            def score_to_elo(score):
-                return - 400 * math.log10(2 / (score + 1) - 1)
-            elo = score_to_elo(y_pred[i] / 2)
-            pm = max(abs(score_to_elo(y_pred[i] / 2 + sigma[i] / 2) - elo),
-                     abs(score_to_elo(y_pred[i] / 2 + sigma[i] / 2) - elo))
-            print(f'Best expectation (κ={kappa}): {X[i]}'
-                  f' = {y_pred[i]/2:.3f} ± {sigma[i]/2:.3f}'
-                  f' (ELO-diff {elo:.3f} ± {pm:.3f})')
-
+        summarize(opt, samples=args.n)
         if len(dimensions) == 1:
             plot_optimizer(opt, dimensions[0].low, dimensions[0].high)
     else:
         print('Not enought data to summarize results.')
 
     logging.debug('Quitting engines')
-    await asyncio.gather(*(e.quit() for es in engines for e in es))
+    try:
+        # Could also use wait here, but wait for some reason fails if the list
+        # is empty. Why can't we just wait for nothing?
+        await asyncio.gather(*(e.quit() for es in engines for e in es
+                               if not e.returncode.done()))
+    except chess.engine.EngineError:
+        pass
 
-asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
-try:
-    if hasattr(asyncio, 'run'):
-        asyncio.run(main())
-    else:
-        asyncio.get_event_loop().run_until_complete(main())
-except KeyboardInterrupt:
-    logging.debug('KeyboardInterrupt at root')
+
+if __name__ == '__main__':
+    asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
+    try:
+        if hasattr(asyncio, 'run'):
+            asyncio.run(main())
+        else:
+            asyncio.get_event_loop().run_until_complete(main())
+    except KeyboardInterrupt:
+        logging.debug('KeyboardInterrupt at root')
