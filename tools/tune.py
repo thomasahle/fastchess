@@ -81,6 +81,14 @@ group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
                    help='For the Gaussian Process optimizer, use this to specify the'
                    ' variance of the assumed noise. Larger values means more exploration.')
 
+group = parser.add_argument_group('Adjudication options')
+group.add_argument('-adj-ply', type=int, default=40,
+                   help='Number of plies that have passed before checking the score, default=40')
+group.add_argument('-adj-count', type=int, default=4,
+                   help='Count of successive moves, default=4')
+group.add_argument('-adj-score', type=int, default=400,
+                   help='Score in cp, default=400')
+
 
 async def load_engine(engine_args, name, debug=False):
     args = next(a for a in engine_args if a['name'] == name)
@@ -111,11 +119,46 @@ def load_conf(conf):
         return json.load(open(conf))
 
 
+def adjudicate(score_hist, is_tuned_eng_white, adj_count, adj_ply, adj_score):
+    """
+    :score_hist: A list of wpov scores.
+    :is_tuned_eng_white: The tuned engine is playing white.
+    """
+    res_value, result, w_good_cnt, b_good_cnt = 0, None, 0, 0
+    k = len(score_hist) - 1
+    
+    if k < adj_ply or abs(score_hist[k]) < adj_score:
+        return res_value, result
+    
+    count_max = adj_count * 2
+    for i in itertools.count(k, step=-1):
+        if i <= k - count_max:
+            break
+        if score_hist[i] >= adj_score:
+            w_good_cnt += 1
+        elif score_hist[i] <= -adj_score:
+            b_good_cnt += 1
+
+    if w_good_cnt >= count_max or b_good_cnt >= count_max:
+        res_value = -1
+        if w_good_cnt >= count_max and is_tuned_eng_white:
+            res_value = 1
+        elif b_good_cnt >= count_max and not is_tuned_eng_white:
+            res_value = 1
+
+        if res_value > 0:
+            result = '1-0' if is_tuned_eng_white else '0-1'
+        else:
+            result = '1-0' if not is_tuned_eng_white else '0-1'
+
+    return res_value, result
+
+
 Context = namedtuple('Context', 'enginea engineb limit max_len')
 GAMES_PLAYED = 2  # Number of games played with a given book
 
 
-async def get_value(context, init_board, args, game_id):
+async def get_value(context, init_board, args, game_id, adj_count, adj_ply, adj_score):
     enginea, engineb, limit, max_len = context
     # We configure enginea. Engineb is simply our opponent
     enginea.id['args'] = args
@@ -129,6 +172,7 @@ async def get_value(context, init_board, args, game_id):
     games = []
     error = None
     for i in range(GAMES_PLAYED):
+        score_hist = []
         white, black = (enginea, engineb) if i % 2 == 0 else (engineb, enginea)
         game = chess.pgn.Game({
             'Event': 'Tune.py',
@@ -144,12 +188,11 @@ async def get_value(context, init_board, args, game_id):
         node = game
         for move in init_board.move_stack:
             node = node.add_variation(move, comment='book')
+            score_hist.append(0)
         # Run engines
         try:
             for ply in itertools.count(int(node.board().turn == chess.BLACK)):
                 board = node.board()
-                # TODO: Add options for stopping games earlier when a player has a
-                #       big advantage or low score for long.
                 if ply > max_len:
                     game.headers.update({
                         'Result': '1/2-1/2',
@@ -175,6 +218,21 @@ async def get_value(context, init_board, args, game_id):
                     break
                 node = node.add_variation(play.move, comment=f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
                                           f' {play.info.get("time",0)}s')
+                # Adjudicate game by score, save score in wpov
+                try:
+                    score_hist.append(play.info['score'].white().score(mate_score=32000))
+                except Exception:
+                    logging.debug(play.info)
+                    logging.exception('Unexpected exception')
+                    score_hist.append(0)
+                res_value, result = adjudicate(score_hist, i % 2 == 0, adj_count, adj_ply, adj_score)
+                if res_value != 0:
+                    score += res_value
+                    game.headers.update({
+                        'Result': result,
+                        'Termination': 'adjudication based on score'
+                        })
+                    break
         except (asyncio.CancelledError, KeyboardInterrupt) as e:
             print('get_value Cancelled')
             # We should get CancelledError when the user pressed Ctrl+C
@@ -190,6 +248,7 @@ async def get_value(context, init_board, args, game_id):
             score += -1 if ply % 2 == 0 else 1
             # await asyncio.wait([enginea.quit(), engineb.quit()])
             error = e
+            logging.debug(f'EngineError: {e}')
             break
         except BaseException:
             game.headers.update({'Result': '*', 'Termination': 'error'})
@@ -414,7 +473,10 @@ async def main():
                     context,
                     random.choice(book),
                     engine_args,
-                    started))
+                    started,
+                    args.adj_count,
+                    args.adj_ply,
+                    args.adj_score))
             # We tag the task with some attributes that we need when it finishes.
             setattr(task, 'tune_x', x)
             setattr(task, 'tune_context', context)
