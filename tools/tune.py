@@ -23,76 +23,62 @@ warnings.filterwarnings(
     message='The objective has been evaluated at this point before.')
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-debug', action='store_true', help='Enable debugging of engine')
-parser.add_argument('-log-file', type=pathlib.Path, help='Used to recover from crashes')
-parser.add_argument('-n', type=int, default=100, help='Number of iterations')
-parser.add_argument(
-    '-concurrency',
-    type=int,
-    default=1,
-    help='Number of concurrent games')
-parser.add_argument('-games-file', type=pathlib.Path, help='Store all games to this pgn')
+parser.add_argument('-debug', action='store_true',
+                    help='Enable debugging of engine')
+parser.add_argument('-log-file', type=pathlib.Path,
+                    help='Used to recover from crashes')
+parser.add_argument('-n', type=int, default=100,
+                    help='Number of iterations')
+parser.add_argument('-concurrency', type=int, default=1,
+                    help='Number of concurrent games')
+parser.add_argument('-games-file', type=pathlib.Path,
+                    help='Store all games to this pgn')
 
 group = parser.add_argument_group('Engine options')
-group.add_argument('engine', help='Engine to tune')
-group.add_argument('-conf', help='Engines.json file to load from')
-group.add_argument('-opp-engine', help='Tune against a different engine')
+group.add_argument('engine',
+                   help='Engine to tune')
+group.add_argument('-conf',
+                   help='Engines.json file to load from')
+group.add_argument('-opp-engine',
+                   help='Tune against a different engine')
 
 group = parser.add_argument_group('Games format')
-group.add_argument('-book', type=pathlib.Path, help='pgn file with opening lines.')
-group.add_argument(
-    '-n-book',
-    type=int,
-    default=10,
-    help='Length of opening lines to use in plies.')
+group.add_argument('-book', type=pathlib.Path,
+                   help='pgn file with opening lines.')
+group.add_argument('-n-book', type=int, default=10,
+                   help='Length of opening lines to use in plies.')
+group.add_argument('-max-len', type=int, default=10000,
+                   help='Maximum length of game in plies before termination.')
 subgroup = group.add_mutually_exclusive_group(required=True)
-subgroup.add_argument('-movetime', type=int, help='Time per move in ms')
-subgroup.add_argument('-nodes', type=int, help='Nodes per move')
-subgroup.add_argument(
-    '-max-len',
-    type=int,
-    default=10000,
-    help='Maximum length of game in plies before termination.')
+subgroup.add_argument('-movetime', type=int,
+                      help='Time per move in ms')
+subgroup.add_argument('-nodes', type=int,
+                      help='Nodes per move')
 
 group = parser.add_argument_group('Options to tune')
-group.add_argument(
-    '-opt',
-    nargs='+',
-    action='append',
-    default=[],
-    metavar=(
-        'name',
-        'lower, upper'),
-    help='Integer option to tune.')
-group.add_argument(
-    '-c-opt',
-    nargs='+',
-    action='append',
-    default=[],
-    metavar=(
-        'name',
-        'value'),
-    help='Categorical option to tune')
+group.add_argument('-opt', nargs='+', action='append', default=[],
+                   metavar=('NAME', 'LOWER, UPPER'),
+                   help='Integer option to tune.')
+group.add_argument('-c-opt', nargs='+', action='append', default=[],
+                   metavar=('NAME', 'VALUE'),
+                   help='Categorical option to tune')
 
 group = parser.add_argument_group('Optimization parameters')
-group.add_argument(
-    '-base-estimator',
-    default='GP',
-    help='One of "GP", "RF", "ET", "GBRT"')
-group.add_argument(
-    '-n-initial-points',
-    type=int,
-    default=10,
-    help='Number of points chosen before approximating with base estimator.')
-group.add_argument(
-    '-acq-func',
-    default='gp_hedge',
-    help='Can be either of "LCB" for lower confidence bound.'
-         ' "EI" for negative expected improvement.'
-         ' "PI" for negative probability of improvement.'
-         ' "gp_hedge" (default) Probabilistically choose one of the above'
-         ' three acquisition functions at every iteration.')
-group.add_argument('-acq-optimizer', default='auto', help='Either "sampling" or "lbfgs"')
+group.add_argument('-base-estimator', default='GP',
+                   help='One of "GP", "RF", "ET", "GBRT"')
+group.add_argument('-n-initial-points', type=int, default=10,
+                   help='Number of points chosen before approximating with base estimator.')
+group.add_argument('-acq-func', default='gp_hedge',
+                   help='Can be either of "LCB" for lower confidence bound.'
+                   ' "EI" for negative expected improvement.'
+                   ' "PI" for negative probability of improvement.'
+                   ' "gp_hedge" (default) Probabilistically choose one of the above'
+                   ' three acquisition functions at every iteration.')
+group.add_argument('-acq-optimizer', default='auto',
+                   help='Either "sampling" or "lbfgs"')
+group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
+                   help='For the Gaussian Process optimizer, use this to specify the'
+                   ' variance of the assumed noise. Larger values means more exploration.')
 
 
 async def load_engine(engine_args, name, debug=False):
@@ -382,7 +368,7 @@ async def main():
         n_initial_points=args.n_initial_points,
         acq_func=args.acq_func,
         acq_optimizer=args.acq_optimizer,
-        #acq_func_kwargs={'noise': 10}
+        acq_func_kwargs={'noise': args.acq_noise}
     )
 
     if args.games_file:
@@ -409,10 +395,12 @@ async def main():
     # Run tasks concurrently
     try:
         started = cached_games
+
         def on_done(task):
             if task.exception():
                 logging.error('Error while excecuting game')
                 task.print_stack()
+
         def new_game(context):
             x = opt.ask()
             engine_args = x_to_args(x, dim_names, options)
@@ -430,7 +418,8 @@ async def main():
             task.add_done_callback(on_done)
             return task
         tasks = []
-        xs = opt.ask(min(args.concurrency, args.n - started)) if args.n - started > 0 else []
+        xs = opt.ask(min(args.concurrency, args.n - started)
+                     ) if args.n - started > 0 else []
         for conc_id, x_init in enumerate(xs):
             enginea, engineb = engines[conc_id]
             context = Context(enginea, engineb, limit, args.max_len)
