@@ -23,8 +23,9 @@ warnings.filterwarnings(
     message='The objective has been evaluated at this point before.')
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-debug', action='store_true',
-                    help='Enable debugging of engine')
+parser.add_argument('-debug', nargs='?', metavar='PATH', const=sys.stdout,
+                    default=None, type=pathlib.Path,
+                    help='Enable debugging of engines.')
 parser.add_argument('-log-file', type=pathlib.Path,
                     help='Used to recover from crashes')
 parser.add_argument('-n', type=int, default=100,
@@ -349,7 +350,10 @@ async def main():
         print('No book. Starting every game from initial position.')
 
     if args.debug:
-        logging.basicConfig(level=logging.DEBUG)
+        if args.debug == sys.stdout:
+            logging.basicConfig(level=logging.DEBUG)
+        else:
+            logging.basicConfig(level=logging.DEBUG, filename=args.debug, filemode='w')
 
     print('Loading engines')
     conf = load_conf(args.conf)
