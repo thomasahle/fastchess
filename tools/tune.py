@@ -219,6 +219,10 @@ async def get_value(context, init_board, args, game_id, adj_count, adj_score):
                 # Adjudicate game by score, save score in wpov
                 try:
                     score_hist.append(play.info['score'].white().score(mate_score=32000))
+                except KeyError:
+                    logging.debug(play.info)
+                    logging.exception('Engine info line has no score.')
+                    score_hist.append(0)
                 except Exception:
                     logging.debug(play.info)
                     logging.exception('Unexpected exception')
