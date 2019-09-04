@@ -221,7 +221,8 @@ async def get_value(context, init_board, args, game_id, adj_count, adj_score):
                                           f' {play.info.get("time",0)}s')
                 # Adjudicate game by score, save score in wpov
                 try:
-                    score_hist.append(play.info['score'].white().score(mate_score=MATE_SCORE))
+                    score_hist.append(play.info['score'].white().score(
+                            mate_score=max(adj_score, MATE_SCORE)))
                 except KeyError:
                     logging.debug(play.info)
                     logging.exception('Engine info line has no score.')
