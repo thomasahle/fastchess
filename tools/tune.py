@@ -85,10 +85,10 @@ group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
                    ' variance of the assumed noise. Larger values means more exploration.')
 
 group = parser.add_argument_group('Adjudication options')
-group.add_argument('-adj-count', type=int, default=4,
-                   help='Count of successive moves, default=4')
-group.add_argument('-adj-score', type=int, default=400,
-                   help='Score in cp, default=400')
+group.add_argument('-win-adj', nargs='*',
+                   help='Adjudicate won game. Usage: ' +
+                   f'-win-adj count=4 score=400 ' +
+                   f'Default values: count=4, score={MATE_SCORE}')
 
 
 async def load_engine(engine_args, name, debug=False):
@@ -120,24 +120,24 @@ def load_conf(conf):
         return json.load(open(conf))
 
 
-def adjudicate(score_hist, is_tuned_eng_white, adj_count, adj_score):
+def adjudicate(score_hist, is_tuned_eng_white, win_adj_count, win_adj_score):
     """
     :score_hist: A list of wpov scores.
     :is_tuned_eng_white: The tuned engine is playing white.
     """
     res_value, result, w_good_cnt, b_good_cnt = 0, None, 0, 0
     k = len(score_hist) - 1
-    count_max = adj_count * 2
+    count_max = win_adj_count * 2
     
-    if k + 1 < count_max or abs(score_hist[k]) < adj_score:
+    if k + 1 < count_max or abs(score_hist[k]) < win_adj_score:
         return res_value, result    
     
     for i in itertools.count(k, step=-1):
         if i <= k - count_max:
             break
-        if score_hist[i] >= adj_score:
+        if score_hist[i] >= win_adj_score:
             w_good_cnt += 1
-        elif score_hist[i] <= -adj_score:
+        elif score_hist[i] <= -win_adj_score:
             b_good_cnt += 1
 
     if w_good_cnt >= count_max or b_good_cnt >= count_max:
@@ -159,7 +159,7 @@ Context = namedtuple('Context', 'enginea engineb limit max_len')
 GAMES_PLAYED = 2  # Number of games played with a given book
 
 
-async def get_value(context, init_board, args, game_id, adj_count, adj_score):
+async def get_value(context, init_board, args, game_id, win_adj_count, win_adj_score):
     enginea, engineb, limit, max_len = context
     # We configure enginea. Engineb is simply our opponent
     enginea.id['args'] = args
@@ -222,7 +222,7 @@ async def get_value(context, init_board, args, game_id, adj_count, adj_score):
                 # Adjudicate game by score, save score in wpov
                 try:
                     score_hist.append(play.info['score'].white().score(
-                            mate_score=max(adj_score, MATE_SCORE)))
+                            mate_score=max(win_adj_score, MATE_SCORE)))
                 except KeyError:
                     logging.debug(play.info)
                     logging.exception('Engine info line has no score.')
@@ -231,7 +231,8 @@ async def get_value(context, init_board, args, game_id, adj_count, adj_score):
                     logging.debug(play.info)
                     logging.exception('Unexpected exception')
                     score_hist.append(0)
-                res_value, result = adjudicate(score_hist, i % 2 == 0, adj_count, adj_score)
+                res_value, result = adjudicate(score_hist, i % 2 == 0,
+                                               win_adj_count, win_adj_score)
                 if res_value != 0:
                     score += res_value
                     game.headers.update({
@@ -404,6 +405,15 @@ def summarize(opt, samples):
 
 async def main():
     args = parser.parse_args()
+    
+    # Won game adjudication
+    win_adj_count, win_adj_score = 4, MATE_SCORE
+    if args.win_adj:
+        for n in args.win_adj:
+            if 'count' in n:
+                win_adj_count = int(n.split('=')[1])
+            elif 'score' in n:
+                win_adj_score = int(n.split('=')[1])
 
     book = []
     if args.book:
@@ -479,8 +489,8 @@ async def main():
                     random.choice(book),
                     engine_args,
                     started,
-                    args.adj_count,
-                    args.adj_score))
+                    win_adj_count,
+                    win_adj_score))
             # We tag the task with some attributes that we need when it finishes.
             setattr(task, 'tune_x', x)
             setattr(task, 'tune_context', context)
