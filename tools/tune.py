@@ -267,14 +267,35 @@ def summarize(opt, samples):
 async def main():
     args = parser.parse_args()
     
-    # Won game adjudication
+    if args.debug:
+        if args.debug == sys.stdout:
+            logging.basicConfig(level=logging.DEBUG)
+        else:
+            logging.basicConfig(level=logging.DEBUG, filename=args.debug, filemode='w')
+    
+    # Do not run the tuner if something is wrong with the adjudication option
+    # that is set by the user. These options could be critical in tuning.
     win_adj_count, win_adj_score = 4, Arena.MATE_SCORE
     if args.win_adj:
         for n in args.win_adj:
             if 'count' in n:
-                win_adj_count = int(n.split('=')[1])
+                try:
+                    win_adj_count = int(n.split('=')[1])
+                except (IndexError, ValueError):
+                    logging.exception('Error in win adjudication count option.')
+                    raise
+                except Exception:
+                    logging.exception('Unexpected exception in win-adj count.')
+                    raise
             elif 'score' in n:
-                win_adj_score = int(n.split('=')[1])
+                try:
+                    win_adj_score = int(n.split('=')[1])
+                except (IndexError, ValueError):
+                    logging.exception('Error in win adjudication score option.')
+                    raise
+                except Exception:
+                    logging.exception('Unexpected exception in win-adj score.')
+                    raise
 
     book = []
     if args.book:
@@ -283,12 +304,6 @@ async def main():
     if not book:
         book.append(chess.Board())
         print('No book. Starting every game from initial position.')
-
-    if args.debug:
-        if args.debug == sys.stdout:
-            logging.basicConfig(level=logging.DEBUG)
-        else:
-            logging.basicConfig(level=logging.DEBUG, filename=args.debug, filemode='w')
 
     print('Loading engines')
     conf = load_conf(args.conf)
