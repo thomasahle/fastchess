@@ -4,11 +4,46 @@ import itertools
 import chess.pgn
 
 class Arena:
-    def __init__(self, enginea, engineb, limit, max_len):
+    MATE_SCORE = 32767
+    
+    def __init__(self, enginea, engineb, limit, max_len, win_adj_count, win_adj_score):
         self.enginea = enginea
         self.engineb = engineb
         self.limit = limit
         self.max_len = max_len
+        self.win_adj_count = win_adj_count
+        self.win_adj_score = win_adj_score
+        self.score_hist = []
+        
+    def adjudicate(self, is_tuned_eng_white):
+        res_value, result, w_good_cnt, b_good_cnt = 0, None, 0, 0
+        k = len(self.score_hist) - 1
+        count_max = self.win_adj_count * 2
+        
+        if k + 1 < count_max or abs(self.score_hist[k]) < self.win_adj_score:
+            return res_value, result    
+        
+        for i in itertools.count(k, step=-1):
+            if i <= k - count_max:
+                break
+            if self.score_hist[i] >= self.win_adj_score:
+                w_good_cnt += 1
+            elif self.score_hist[i] <= -self.win_adj_score:
+                b_good_cnt += 1
+    
+        if w_good_cnt >= count_max or b_good_cnt >= count_max:
+            res_value = -1
+            if w_good_cnt >= count_max and is_tuned_eng_white:
+                res_value = 1
+            elif b_good_cnt >= count_max and not is_tuned_eng_white:
+                res_value = 1
+    
+            if res_value > 0:
+                result = '1-0' if is_tuned_eng_white else '0-1'
+            else:
+                result = '1-0' if not is_tuned_eng_white else '0-1'
+    
+        return res_value, result
 
     async def play_game(self, init_node, game_id, flip=False):
         """ Yields (play, error) tupples. Also updates the game with headers and moves. """
@@ -18,8 +53,6 @@ class Arena:
             node = init_node
             for ply in itertools.count(int(node.board().turn == chess.BLACK)):
                 board = node.board()
-                # TODO: Add options for stopping games earlier when a player has a
-                #       big advantage or low score for long.
                 if ply > self.max_len:
                     game.headers.update({
                         'Result': '1/2-1/2',
@@ -47,6 +80,21 @@ class Arena:
                         f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
                         f' {play.info.get("time",0)}s')
 
+                # Adjudicate game by score, save score in wpov
+                try:
+                    self.score_hist.append(play.info['score'].white().score(
+                            mate_score=max(self.win_adj_score, Arena.MATE_SCORE)))
+                except KeyError:
+                    self.score_hist.append(0)
+                except Exception:
+                    self.score_hist.append(0)
+                res_value, result = self.adjudicate(not flip)
+                if res_value != 0:
+                    game.headers.update({
+                        'Result': result,
+                        'Termination': 'adjudication based on score'
+                        })
+                    return
         except (asyncio.CancelledError, KeyboardInterrupt) as e:
             print('play_game Cancelled')
             # We should get CancelledError when the user pressed Ctrl+C
@@ -75,6 +123,7 @@ class Arena:
         score = 0
         games = []
         for i in range(games_played):
+            self.score_hist = []
             white, black = (self.enginea, self.engineb) if i % 2 == 0 else (self.engineb, self.enginea)
             game = chess.pgn.Game({
                 'Event': 'Tune.py',
@@ -90,6 +139,7 @@ class Arena:
             node = game
             for move in init_board.move_stack:
                 node = node.add_variation(move, comment='book')
+                self.score_hist.append(0)
             # Run engines
             async for _play, er in self.play_game(node, games_played * game_id + i, flip=i%2):
                 # If an error occoured, return as much as we got
