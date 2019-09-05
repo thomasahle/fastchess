@@ -18,6 +18,8 @@ import chess
 import numpy as np
 import skopt
 
+from arena import Arena
+
 warnings.filterwarnings(
     'ignore',
     message='The objective has been evaluated at this point before.')
@@ -109,94 +111,6 @@ def load_conf(conf):
         return json.load(open(str(path)))
     else:
         return json.load(open(conf))
-
-
-Context = namedtuple('Context', 'enginea engineb limit max_len')
-GAMES_PLAYED = 2  # Number of games played with a given book
-
-
-async def get_value(context, init_board, args, game_id):
-    enginea, engineb, limit, max_len = context
-    # We configure enginea. Engineb is simply our opponent
-    enginea.id['args'] = args
-    engineb.id['args'] = {}
-    try:
-        await enginea.configure(args)
-    except chess.engine.EngineError as e:
-        print(f'Unable to start game {e}')
-        return [], 0
-    score = 0
-    games = []
-    error = None
-    for i in range(GAMES_PLAYED):
-        white, black = (enginea, engineb) if i % 2 == 0 else (engineb, enginea)
-        game = chess.pgn.Game({
-            'Event': 'Tune.py',
-            'White': white.id['name'],
-            'WhiteArgs': repr(white.id['args']),
-            'Black': black.id['name'],
-            'BlackArgs': repr(black.id['args']),
-            'Round': GAMES_PLAYED * game_id + i
-        })
-        games.append(game)
-        # Add book moves
-        game.setup(init_board.root())
-        node = game
-        for move in init_board.move_stack:
-            node = node.add_variation(move, comment='book')
-        # Run engines
-        try:
-            for ply in itertools.count(int(node.board().turn == chess.BLACK)):
-                board = node.board()
-                # TODO: Add options for stopping games earlier when a player has a
-                #       big advantage or low score for long.
-                if ply > max_len:
-                    game.headers.update({
-                        'Result': '1/2-1/2',
-                        'Termination': 'adjudication'
-                    })
-                    break
-                if board.is_game_over(claim_draw=True):
-                    result = board.result(claim_draw=True)
-                    if result == '1-0' and i % 2 == 0 or result == '0-1' and i % 2 == 1:
-                        score += 1
-                    if result == '1-0' and i % 2 == 1 or result == '0-1' and i % 2 == 0:
-                        score -= 1
-                    game.headers["Result"] = result
-                    break
-                # Try to actually make a move
-                play = await (white, black)[ply % 2].play(
-                    board, limit, game=GAMES_PLAYED * game_id + i,
-                    info=chess.engine.INFO_BASIC | chess.engine.INFO_SCORE)
-                if play.resigned:
-                    game.headers.update({'Result': ('0-1', '1-0')[ply % 2]})
-                    node.comment += f'; {("White","Black")[ply%2]} resgined'
-                    score += -1 if (i + ply) % 2 == 0 else 1
-                    break
-                node = node.add_variation(play.move, comment=f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
-                                          f' {play.info.get("time",0)}s')
-        except (asyncio.CancelledError, KeyboardInterrupt) as e:
-            print('get_value Cancelled')
-            # We should get CancelledError when the user pressed Ctrl+C
-            game.headers.update({'Result': '*', 'Termination': 'unterminated'})
-            node.comment += '; Game was cancelled'
-            await asyncio.wait([enginea.quit(), engineb.quit()])
-            error = e
-            break
-        except chess.engine.EngineError as e:
-            game.headers.update(
-                {'Result': ('0-1', '1-0')[ply % 2], 'Termination': 'error'})
-            node.comment += f'; {("White","Black")[ply%2]} terminated: {e}'
-            score += -1 if ply % 2 == 0 else 1
-            # await asyncio.wait([enginea.quit(), engineb.quit()])
-            error = e
-            break
-        except BaseException:
-            game.headers.update({'Result': '*', 'Termination': 'error'})
-            node.comment += '; Unexpected error'
-            await asyncio.wait([enginea.quit(), engineb.quit()])
-            raise
-    return games, score, error
 
 
 def plot_optimizer(opt, lower, upper):
@@ -407,19 +321,17 @@ async def main():
                 logging.error('Error while excecuting game')
                 task.print_stack()
 
-        def new_game(context):
+        def new_game(arena):
             x = opt.ask()
             engine_args = x_to_args(x, dim_names, options)
             print(f'Starting game {started}/{args.n} with {engine_args}')
-            task = asyncio.create_task(
-                get_value(
-                    context,
-                    random.choice(book),
-                    engine_args,
-                    started))
+            async def routine():
+                await arena.configure(engine_args)
+                return await arena.run_games(random.choice(book), game_id=started)
+            task = asyncio.create_task(routine())
             # We tag the task with some attributes that we need when it finishes.
             setattr(task, 'tune_x', x)
-            setattr(task, 'tune_context', context)
+            setattr(task, 'tune_arena', arena)
             setattr(task, 'tune_game_id', started)
             task.add_done_callback(on_done)
             return task
@@ -428,15 +340,15 @@ async def main():
                      ) if args.n - started > 0 else []
         for conc_id, x_init in enumerate(xs):
             enginea, engineb = engines[conc_id]
-            context = Context(enginea, engineb, limit, args.max_len)
-            tasks.append(new_game(context))
+            arena = Arena(enginea, engineb, limit, args.max_len)
+            tasks.append(new_game(arena))
             started += 1
         while tasks:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             tasks = list(pending)
             for task in done:
                 res = task.result()
-                context, x, game_id = task.tune_context, task.tune_x, task.tune_game_id
+                arena, x, game_id = task.tune_arena, task.tune_x, task.tune_game_id
                 games, y, er = res
                 for game in games:
                     print(game, end='\n\n', file=games_file, flush=True)
@@ -455,7 +367,7 @@ async def main():
                 if data_logger:
                     data_logger.store(x, y)
                 if started < args.n:
-                    tasks.append(new_game(context))
+                    tasks.append(new_game(arena))
                     started += 1
     except asyncio.CancelledError:
         pass
