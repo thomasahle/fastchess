@@ -87,10 +87,11 @@ group = parser.add_argument_group('Adjudication options')
 group.add_argument('-win-adj', nargs='*',
                    help='Adjudicate won game. Usage: '
                    '-win-adj count=4 score=400 '
-                   'If there are 4 moves from white that are 400 or more '
-                   'and there are 4 moves from black that are -400 or less '
-                   'then that game will be adjudicated to a win for white. '
-                   'When the situation is reversed black would win. '
+                   'If the last 4 successive moves of white had a score of '
+                   '400 cp or more and the last 4 successive moves of black '
+                   'had a score of -400 or less then that game will be '
+                   'adjudicated to a win for white. When the situation is '
+                   'reversed black would win. '
                    f'Default values: count=4, score={Arena.MATE_SCORE}')
 
 
