@@ -329,6 +329,8 @@ def summarize(opt, samples):
         i = np.argmax(y_pred - kappa * sigma)
 
         def score_to_elo(score):
+            if score == -1: return float('inf')
+            if score == 1: return -float('inf')
             return - 400 * math.log10(2 / (score + 1) - 1)
         elo = score_to_elo(y_pred[i] / 2)
         pm = max(abs(score_to_elo(y_pred[i] / 2 + sigma[i] / 2) - elo),
