@@ -87,7 +87,7 @@ group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
 group = parser.add_argument_group('Adjudication options')
 group.add_argument('-win-adj', nargs='*',
                    help='Adjudicate won game. Usage: ' +
-                   f'-win-adj count=4 score=400 ' +
+                   '-win-adj count=4 score=400 ' +
                    f'Default values: count=4, score={MATE_SCORE}')
 
 
