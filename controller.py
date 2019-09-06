@@ -47,7 +47,7 @@ class MCTS_Controller:
         if not pvs:
             depth, node = 0, self.node
             while node.children and node.N >= MIN_PV_VISITS:
-                depth, node = depth+1, max(node.children, key=lambda n: n.N)
+                depth, node = depth + 1, max(node.children, key=lambda n: n.N)
             print(f'info score cp {fastchess.win_to_cp(self.node.Q):.0f} depth {depth}'
                   f' time {t*1000:.0f} nodes {self.node.N} nps {nps:.0f}')
 

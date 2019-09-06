@@ -254,8 +254,10 @@ def summarize(opt, samples):
         i = np.argmax(y_pred - kappa * sigma)
 
         def score_to_elo(score):
-            if score == -1: return float('inf')
-            if score == 1: return -float('inf')
+            if score == -1:
+                return float('inf')
+            if score == 1:
+                return -float('inf')
             return - 400 * math.log10(2 / (score + 1) - 1)
         elo = score_to_elo(y_pred[i] / 2)
         pm = max(abs(score_to_elo(y_pred[i] / 2 + sigma[i] / 2) - elo),
@@ -267,13 +269,13 @@ def summarize(opt, samples):
 
 async def main():
     args = parser.parse_args()
-    
+
     if args.debug:
         if args.debug == sys.stdout:
             logging.basicConfig(level=logging.DEBUG)
         else:
             logging.basicConfig(level=logging.DEBUG, filename=args.debug, filemode='w')
-    
+
     # Do not run the tuner if something is wrong with the adjudication option
     # that is set by the user. These options could be critical in tuning.
     win_adj_count, win_adj_score = 4, Arena.MATE_SCORE
@@ -360,6 +362,7 @@ async def main():
             x = opt.ask()
             engine_args = x_to_args(x, dim_names, options)
             print(f'Starting game {started}/{args.n} with {engine_args}')
+
             async def routine():
                 await arena.configure(engine_args)
                 return await arena.run_games(random.choice(book), game_id=started)
@@ -375,7 +378,13 @@ async def main():
                      ) if args.n - started > 0 else []
         for conc_id, x_init in enumerate(xs):
             enginea, engineb = engines[conc_id]
-            arena = Arena(enginea, engineb, limit, args.max_len, win_adj_count, win_adj_score)
+            arena = Arena(
+                enginea,
+                engineb,
+                limit,
+                args.max_len,
+                win_adj_count,
+                win_adj_score)
             tasks.append(new_game(arena))
             started += 1
         while tasks:
