@@ -12,19 +12,16 @@ import fastchess
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument(
-    'conf',
-    default='',
-    nargs='?',
-    help='Location of engines.json file to use')
+parser.add_argument('conf', default='', nargs='?',
+                    help='Location of engines.json file to use')
 parser.add_argument('name', default='fastchess', nargs='?', help='Name of engine to use')
 parser.add_argument('-selfplay', action='store_true', help='Play against itself')
 parser.add_argument('-debug', action='store_true', help='Enable debugging of engine')
 parser.add_argument('-movetime', type=int, default=0, help='Movetime in ms')
 parser.add_argument('-nodes', type=int, default=0, help='Maximum nodes')
 parser.add_argument('-no-mcts', action='store_true', help='Play directly from priors')
-parser.add_argument(
-    '-pvs', nargs='?', help='Show Principal Variations (when mcts)', const=3, default=0, type=int)
+parser.add_argument('-pvs', nargs='?', const=3, default=0, type=int,
+                    help='Show Principal Variations (when mcts)')
 parser.add_argument('-fen', help='Start from given position',
                     default='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
 
