@@ -46,7 +46,7 @@ class Arena:
         return res_value, result
 
     async def play_game(self, init_node, game_id, flip=False):
-        """ Yields (play, error) tupples. Also updates the game with headers and moves. """
+        """ Yields (play, error) tuples. Also updates the game with headers and moves. """
         white, black = (
             self.enginea, self.engineb) if not flip else (
             self.engineb, self.enginea)
@@ -111,7 +111,7 @@ class Arena:
             yield None, e
 
     async def configure(self, args):
-        # We configure enginea. Engineb is simply our opponent.
+        # We configure enginea, engineb is our unchanged opponent.
         # Maybe this should be refactored.
         self.enginea.id['args'] = args
         self.engineb.id['args'] = {}
