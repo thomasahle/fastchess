@@ -13,22 +13,21 @@ class Arena:
         self.max_len = max_len
         self.win_adj_count = win_adj_count
         self.win_adj_score = win_adj_score
-        self.score_hist = []
         
-    def adjudicate(self, is_tuned_eng_white):
+    def adjudicate(self, score_hist, is_tuned_eng_white):
         res_value, result, w_good_cnt, b_good_cnt = 0, None, 0, 0
-        k = len(self.score_hist) - 1
+        k = len(score_hist) - 1
         count_max = self.win_adj_count * 2
         
-        if k + 1 < count_max or abs(self.score_hist[k]) < self.win_adj_score:
+        if k + 1 < count_max or abs(score_hist[k]) < self.win_adj_score:
             return res_value, result    
         
         for i in itertools.count(k, step=-1):
             if i <= k - count_max:
                 break
-            if self.score_hist[i] >= self.win_adj_score:
+            if score_hist[i] >= self.win_adj_score:
                 w_good_cnt += 1
-            elif self.score_hist[i] <= -self.win_adj_score:
+            elif score_hist[i] <= -self.win_adj_score:
                 b_good_cnt += 1
     
         if w_good_cnt >= count_max or b_good_cnt >= count_max:
@@ -51,6 +50,7 @@ class Arena:
         try:
             game = init_node.root()
             node = init_node
+            score_hist = []
             for ply in itertools.count(int(node.board().turn == chess.BLACK)):
                 board = node.board()
                 if ply > self.max_len:
@@ -82,13 +82,13 @@ class Arena:
 
                 # Adjudicate game by score, save score in wpov
                 try:
-                    self.score_hist.append(play.info['score'].white().score(
+                    score_hist.append(play.info['score'].white().score(
                             mate_score=max(self.win_adj_score, Arena.MATE_SCORE)))
                 except KeyError:
-                    self.score_hist.append(0)
+                    score_hist.append(0)
                 except Exception:
-                    self.score_hist.append(0)
-                res_value, result = self.adjudicate(not flip)
+                    score_hist.append(0)
+                res_value, result = self.adjudicate(score_hist, not flip)
                 if res_value != 0:
                     game.headers.update({
                         'Result': result,
@@ -123,7 +123,6 @@ class Arena:
         score = 0
         games = []
         for i in range(games_played):
-            self.score_hist = []
             white, black = (self.enginea, self.engineb) if i % 2 == 0 else (self.engineb, self.enginea)
             game = chess.pgn.Game({
                 'Event': 'Tune.py',
@@ -139,7 +138,6 @@ class Arena:
             node = game
             for move in init_board.move_stack:
                 node = node.add_variation(move, comment='book')
-                self.score_hist.append(0)
             # Run engines
             async for _play, er in self.play_game(node, games_played * game_id + i, flip=i%2):
                 # If an error occoured, return as much as we got
