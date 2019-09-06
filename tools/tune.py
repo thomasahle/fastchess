@@ -81,7 +81,7 @@ group.add_argument('-acq-optimizer', default='auto',
                    help='Either "sampling" or "lbfgs"')
 group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
                    help='For the Gaussian Process optimizer, use this to specify the'
-                   ' variance of the assumed noise. Larger values means more exploration.')
+                   ' variance of the assumed noise. Larger values mean more exploration.')
 
 group = parser.add_argument_group('Adjudication options')
 group.add_argument('-win-adj', nargs='*',
@@ -335,7 +335,7 @@ async def main():
 
     if args.log_file:
         key_args = args.__dict__.copy()
-        # Not all arguments change the results, so no need to keep them in the key.
+        # Not all arguments change the result, so no need to keep them in the key.
         for key in ('n', 'games_file', 'concurrency'):
             del key_args[key]
         key = repr(sorted(key_args.items())).encode()
@@ -400,9 +400,9 @@ async def main():
                     print('Game erred:', er, type(er))
                     continue
                 opt.tell(x, -y)  # opt is minimizing
-                # Delete old models to save space. Note hat for the first 10
-                # tells no model is created, as we sare still just querying at
-                # random.
+                # Delete old models to save memory. Note that for the first 10 tells (default)
+                # or the specified -n-initial-points no model is created, as we are still just
+                # querying at random.
                 logging.debug(f'Number of models {len(opt.models)}')
                 if len(opt.models) > 1:
                     del opt.models[0]
