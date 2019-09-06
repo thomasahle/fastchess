@@ -83,6 +83,17 @@ group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
                    help='For the Gaussian Process optimizer, use this to specify the'
                    ' variance of the assumed noise. Larger values means more exploration.')
 
+group = parser.add_argument_group('Adjudication options')
+group.add_argument('-win-adj', nargs='*',
+                   help='Adjudicate won game. Usage: '
+                   '-win-adj count=4 score=400 '
+                   'If the last 4 successive moves of white had a score of '
+                   '400 cp or more and the last 4 successive moves of black '
+                   'had a score of -400 or less then that game will be '
+                   'adjudicated to a win for white. When the situation is '
+                   'reversed black would win. '
+                   f'Default values: count=4, score={Arena.MATE_SCORE}')
+
 
 async def load_engine(engine_args, name, debug=False):
     args = next(a for a in engine_args if a['name'] == name)
@@ -256,6 +267,36 @@ def summarize(opt, samples):
 
 async def main():
     args = parser.parse_args()
+    
+    if args.debug:
+        if args.debug == sys.stdout:
+            logging.basicConfig(level=logging.DEBUG)
+        else:
+            logging.basicConfig(level=logging.DEBUG, filename=args.debug, filemode='w')
+    
+    # Do not run the tuner if something is wrong with the adjudication option
+    # that is set by the user. These options could be critical in tuning.
+    win_adj_count, win_adj_score = 4, Arena.MATE_SCORE
+    if args.win_adj:
+        for n in args.win_adj:
+            if 'count' in n:
+                try:
+                    win_adj_count = int(n.split('=')[1])
+                except (IndexError, ValueError):
+                    logging.exception('Error in win adjudication count option.')
+                    raise
+                except Exception:
+                    logging.exception('Unexpected exception in win-adj count.')
+                    raise
+            elif 'score' in n:
+                try:
+                    win_adj_score = int(n.split('=')[1])
+                except (IndexError, ValueError):
+                    logging.exception('Error in win adjudication score option.')
+                    raise
+                except Exception:
+                    logging.exception('Unexpected exception in win-adj score.')
+                    raise
 
     book = []
     if args.book:
@@ -264,12 +305,6 @@ async def main():
     if not book:
         book.append(chess.Board())
         print('No book. Starting every game from initial position.')
-
-    if args.debug:
-        if args.debug == sys.stdout:
-            logging.basicConfig(level=logging.DEBUG)
-        else:
-            logging.basicConfig(level=logging.DEBUG, filename=args.debug, filemode='w')
 
     print('Loading engines')
     conf = load_conf(args.conf)
@@ -340,7 +375,7 @@ async def main():
                      ) if args.n - started > 0 else []
         for conc_id, x_init in enumerate(xs):
             enginea, engineb = engines[conc_id]
-            arena = Arena(enginea, engineb, limit, args.max_len)
+            arena = Arena(enginea, engineb, limit, args.max_len, win_adj_count, win_adj_score)
             tasks.append(new_game(arena))
             started += 1
         while tasks:
