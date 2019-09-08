@@ -50,6 +50,8 @@ group.add_argument('-book', type=pathlib.Path,
                    help='pgn file with opening lines.')
 group.add_argument('-n-book', type=int, default=10,
                    help='Length of opening lines to use in plies.')
+group.add_argument('-games-per-encounter', type=int, default=1,
+                   help='Number of book positions to play at each set of argument explored.')
 group.add_argument('-max-len', type=int, default=10000,
                    help='Maximum length of game in plies before termination.')
 subgroup = group.add_mutually_exclusive_group(required=True)
@@ -281,24 +283,12 @@ async def main():
     win_adj_count, win_adj_score = 4, Arena.MATE_SCORE
     if args.win_adj:
         for n in args.win_adj:
-            if 'count' in n:
-                try:
-                    win_adj_count = int(n.split('=')[1])
-                except (IndexError, ValueError):
-                    logging.exception('Error in win adjudication count option.')
-                    raise
-                except Exception:
-                    logging.exception('Unexpected exception in win-adj count.')
-                    raise
-            elif 'score' in n:
-                try:
-                    win_adj_score = int(n.split('=')[1])
-                except (IndexError, ValueError):
-                    logging.exception('Error in win adjudication score option.')
-                    raise
-                except Exception:
-                    logging.exception('Unexpected exception in win-adj score.')
-                    raise
+            m = re.match('count=(\d+)', n)
+            if m:
+                win_adj_count = int(m.group(1))
+            m = re.match('score=(\d+)', n)
+            if m:
+                win_adj_score = int(m.group(1))
 
     book = []
     if args.book:
@@ -349,6 +339,9 @@ async def main():
         nodes=args.nodes,
         time=args.movetime and args.movetime / 1000)
 
+    assert args.games_per_encounter >= 1, \
+            'Games per encounter must be >= 1.'
+
     # Run tasks concurrently
     try:
         started = cached_games
@@ -361,11 +354,11 @@ async def main():
         def new_game(arena):
             x = opt.ask()
             engine_args = x_to_args(x, dim_names, options)
-            print(f'Starting game {started}/{args.n} with {engine_args}')
-
+            print(f'Starting {args.games_per_encounter} games {started}/{args.n} with {engine_args}')
             async def routine():
                 await arena.configure(engine_args)
-                return await arena.run_games(random.choice(book), game_id=started)
+                return await arena.run_games(random.choice(book), game_id=started,
+                                             games_played=args.games_per_encounter)
             task = asyncio.create_task(routine())
             # We tag the task with some attributes that we need when it finishes.
             setattr(task, 'tune_x', x)
