@@ -41,7 +41,7 @@ parser.add_argument('-games-file', type=pathlib.Path,
 group = parser.add_argument_group('Engine options')
 group.add_argument('engine',
                    help='Engine to tune')
-group.add_argument('-conf',
+group.add_argument('-conf', type=pathlib.Path,
                    help='Engines.json file to load from')
 group.add_argument('-opp-engine',
                    help='Tune against a different engine')
@@ -85,6 +85,14 @@ group.add_argument('-acq-optimizer', default='auto',
 group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
                    help='For the Gaussian Process optimizer, use this to specify the'
                    ' variance of the assumed noise. Larger values mean more exploration.')
+group.add_argument('-acq-xi', default=0.01, metavar='XI', type=float,
+                   help='Controls how much improvement one wants over the previous best'
+                   ' values. Used when the acquisition is either "EI" or "PI".')
+group.add_argument('-acq-kappa', default=1.96, metavar='KAPPA', type=float,
+                   help='Controls how much of the variance in the predicted values should be'
+                   ' taken into account. If set to be very high, then we are favouring'
+                   ' exploration over exploitation and vice versa. Used when the acquisition'
+                   ' is "LCB".')
 
 group = parser.add_argument_group('Adjudication options')
 group.add_argument('-win-adj', nargs='*',
@@ -99,6 +107,8 @@ group.add_argument('-win-adj', nargs='*',
 
 
 async def load_engine(engine_args, name, debug=False):
+    assert engine_args and any(a['name'] == name for a in engine_args), \
+            f'Engine "{name}" was not found in engines.json file'
     args = next(a for a in engine_args if a['name'] == name)
     curdir = str(pathlib.Path(__file__).parent.parent)
     popen_args = {'env': {'PATH': os.environ['PATH']}}
@@ -119,12 +129,12 @@ async def load_engine(engine_args, name, debug=False):
 def load_conf(conf):
     if not conf:
         path = pathlib.Path(__file__).parent.parent / 'engines.json'
-        if not path.is_file():
-            print('Unable to locate engines.json file.')
-            return
-        return json.load(open(str(path)))
+        assert path.is_file(), 'No engines conf specified and unable to locate' \
+                               ' engines.json file automatically.'
+        return json.load(path.open())
     else:
-        return json.load(open(conf))
+        assert conf.is_file(), f'Unable to open "{conf}"'
+        return json.load(conf.open())
 
 
 def plot_optimizer(opt, lower, upper):
@@ -316,7 +326,11 @@ async def main():
         n_initial_points=args.n_initial_points,
         acq_func=args.acq_func,
         acq_optimizer=args.acq_optimizer,
-        acq_func_kwargs={'noise': args.acq_noise}
+        acq_func_kwargs={
+            'xi': args.acq_xi,
+            'kappa': args.acq_kappa,
+            'noise': args.acq_noise
+            }
     )
 
     if args.games_file:
