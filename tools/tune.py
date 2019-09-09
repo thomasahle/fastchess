@@ -2,7 +2,6 @@ import math
 import hashlib
 import functools
 import logging
-import random
 import sys
 import json
 import pathlib
@@ -52,7 +51,7 @@ group.add_argument('-book', type=pathlib.Path,
                    help='pgn file with opening lines.')
 group.add_argument('-n-book', type=int, default=10,
                    help='Length of opening lines to use in plies.')
-group.add_argument('-games-per-encounter', type=int, default=1,
+group.add_argument('-games-per-encounter', type=int, default=2,
                    help='Number of book positions to play at each set of argument explored.')
 group.add_argument('-max-len', type=int, default=10000,
                    help='Maximum length of game in plies before termination.')
@@ -258,14 +257,14 @@ def summarize(opt, samples):
         i = np.argmax(y_pred - kappa * sigma)
 
         def score_to_elo(score):
-            if score == -1:
+            if score <= -1:
                 return float('inf')
-            if score == 1:
+            if score >= 1:
                 return -float('inf')
             return - 400 * math.log10(2 / (score + 1) - 1)
         elo = score_to_elo(y_pred[i] / 2)
-        pm = max(abs(score_to_elo(y_pred[i] / 2 + sigma[i] / 2) - elo),
-                 abs(score_to_elo(y_pred[i] / 2 + sigma[i] / 2) - elo))
+        pm = max(abs(score_to_elo(y_pred[i] + sigma[i]) - elo),
+                 abs(score_to_elo(y_pred[i] + sigma[i]) - elo))
         print(f'Best expectation (κ={kappa}): {X[i]}'
               f' = {y_pred[i]/2:.3f} ± {sigma[i]/2:.3f}'
               f' (ELO-diff {elo:.3f} ± {pm:.3f})')
@@ -341,8 +340,8 @@ async def main():
         nodes=args.nodes,
         time=args.movetime and args.movetime / 1000)
 
-    assert args.games_per_encounter >= 1, \
-            'Games per encounter must be >= 1.'
+    assert args.games_per_encounter >= 2 and args.games_per_encounter % 2 == 0, \
+            'Games per encounter must be even and >= 2.'
 
     # Run tasks concurrently
     try:
@@ -359,7 +358,7 @@ async def main():
             print(f'Starting {args.games_per_encounter} games {started}/{args.n} with {engine_args}')
             async def routine():
                 await arena.configure(engine_args)
-                return await arena.run_games(random.choice(book), game_id=started,
+                return await arena.run_games(book, game_id=started,
                                              games_played=args.games_per_encounter)
             task = asyncio.create_task(routine())
             # We tag the task with some attributes that we need when it finishes.
@@ -389,6 +388,7 @@ async def main():
                 res = task.result()
                 arena, x, game_id = task.tune_arena, task.tune_x, task.tune_game_id
                 games, y, er = res
+                y /= args.games_per_encounter # Normalize to [-1, 1] range
                 for game in games:
                     print(game, end='\n\n', file=games_file, flush=True)
                 if er:

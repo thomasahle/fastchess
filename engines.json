@@ -33,7 +33,7 @@
    },
    {
       "name": "sunfish",
-      "command": "$PYTHON -u xboard.py",
+      "command": "python3 -u xboard.py",
       "workingDirectory": "$FILE/../sunfish",
       "protocol": "xboard"
    },

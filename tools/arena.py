@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import random
 
 import chess.pgn
 
@@ -121,34 +122,37 @@ class Arena:
             print(f'Unable to start game {e}')
             return [], 0
 
-    async def run_games(self, init_board, game_id=0, games_played=2):
+    async def run_games(self, book, game_id=0, games_played=2):
         score = 0
         games = []
-        for i in range(games_played):
-            white, black = (self.enginea, self.engineb) if i % 2 == 0 else (
-                self.engineb, self.enginea)
-            game = chess.pgn.Game({
-                'Event': 'Tune.py',
-                'White': white.id['name'],
-                'WhiteArgs': repr(white.id['args']),
-                'Black': black.id['name'],
-                'BlackArgs': repr(black.id['args']),
-                'Round': games_played * game_id + i
-            })
-            games.append(game)
-            # Add book moves
-            game.setup(init_board.root())
-            node = game
-            for move in init_board.move_stack:
-                node = node.add_variation(move, comment='book')
-            # Run engines
-            async for _play, er in self.play_game(node, games_played * game_id + i, flip=i % 2):
-                # If an error occoured, return as much as we got
-                if er is not None:
-                    return games, score, er
-            result = game.headers["Result"]
-            if result == '1-0' and i % 2 == 0 or result == '0-1' and i % 2 == 1:
-                score += 1
-            if result == '1-0' and i % 2 == 1 or result == '0-1' and i % 2 == 0:
-                score -= 1
+        for r in range(games_played//2):
+            init_board = random.choice(book)
+            for color in range(2):
+                white, black = (self.enginea, self.engineb) if color == chess.WHITE \
+                    else (self.engineb, self.enginea)
+                game_round = games_played * game_id + color + 2*r
+                game = chess.pgn.Game({
+                    'Event': 'Tune.py',
+                    'White': white.id['name'],
+                    'WhiteArgs': repr(white.id['args']),
+                    'Black': black.id['name'],
+                    'BlackArgs': repr(black.id['args']),
+                    'Round': game_round
+                })
+                games.append(game)
+                # Add book moves
+                game.setup(init_board.root())
+                node = game
+                for move in init_board.move_stack:
+                    node = node.add_variation(move, comment='book')
+                # Run engines
+                async for _play, er in self.play_game(node, game_round, flip=bool(color)):
+                    # If an error occoured, return as much as we got
+                    if er is not None:
+                        return games, score, er
+                result = game.headers["Result"]
+                if result == '1-0' and color == chess.WHITE or result == '0-1' and color == chess.BLACK:
+                    score += 1
+                if result == '1-0' and color == chess.BLACK or result == '0-1' and color == chess.WHITE:
+                    score -= 1
         return games, score, None

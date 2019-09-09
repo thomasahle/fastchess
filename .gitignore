@@ -9,3 +9,4 @@ log
 *.pgn
 *.gz
 my_engines.json
+debugfile
