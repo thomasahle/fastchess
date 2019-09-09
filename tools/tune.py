@@ -11,6 +11,7 @@ import argparse
 import warnings
 import itertools
 import re
+import os
 from collections import namedtuple
 
 import chess.pgn
@@ -101,7 +102,7 @@ group.add_argument('-win-adj', nargs='*',
 async def load_engine(engine_args, name, debug=False):
     args = next(a for a in engine_args if a['name'] == name)
     curdir = str(pathlib.Path(__file__).parent.parent)
-    popen_args = {}
+    popen_args = {'env': {'PATH': os.environ['PATH']}}
     if 'workingDirectory' in args:
         popen_args['cwd'] = args['workingDirectory'].replace('$FILE', curdir)
     cmd = args['command'].split()
