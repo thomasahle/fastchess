@@ -10,6 +10,7 @@ import asyncio
 import argparse
 import warnings
 import itertools
+import re
 from collections import namedtuple
 
 import chess.pgn
