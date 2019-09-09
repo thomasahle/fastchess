@@ -7,6 +7,7 @@ import json
 import pathlib
 import asyncio
 import argparse
+import textwrap
 import warnings
 import itertools
 import re
@@ -25,40 +26,80 @@ warnings.filterwarnings(
     'ignore',
     message='The objective has been evaluated at this point before.')
 
-parser = argparse.ArgumentParser()
+class Formatter(argparse.HelpFormatter):
+
+    def _fill_text(self, text, width, indent):
+        return ''.join(indent + line for line in text.splitlines(keepends=True))
+
+    def _get_help_string(self, action):
+        help = action.help
+        if not action.default:
+            return help
+        if '%(default)' not in action.help:
+            if action.default is not argparse.SUPPRESS:
+                defaulting_nargs = [argparse.OPTIONAL, argparse.ZERO_OR_MORE]
+                if action.option_strings or action.nargs in defaulting_nargs:
+                    help += ' (default: %(default)s)'
+        return help
+
+parser = argparse.ArgumentParser(
+        formatter_class=Formatter,
+        fromfile_prefix_chars='@',
+        usage='%(prog)s ENGINE_NAME [options]',
+        description=textwrap.dedent('''
+            Tune.py is a tool that allows you to tune chess engines with black
+            box optimization through Scikit-Optimize (or skopt). Engine
+            communication is handled through python-chess, so all you need is an
+            uci or cecp compatible engine supporting options, and you are set!
+            \n\n
+            Simple example for tuning the MilliCpuct option of fastchess:
+            $ python tune.py fastchess -opt MilliCpuct
+            \n\n
+            Tune.py uses an engine.json file to load engines. A simple such file
+            is provided in the git repositiory and looks something like this:
+            [{
+              "name": "stockfish",
+              "command": "stockfish",
+              "protocol": "uci"
+            }]
+            \n\n
+            Tip: If you have too many options to handle, tune.py can read its
+            arguemnts from a file with `tune.py @argumentfile`.
+            '''),
+        )
 parser.add_argument('-debug', nargs='?', metavar='PATH', const=sys.stdout,
                     default=None, type=pathlib.Path,
                     help='Enable debugging of engines.')
-parser.add_argument('-log-file', type=pathlib.Path,
+parser.add_argument('-log-file', metavar='PATH', type=pathlib.Path,
                     help='Used to recover from crashes')
 parser.add_argument('-n', type=int, default=100,
                     help='Number of iterations')
-parser.add_argument('-concurrency', type=int, default=1,
+parser.add_argument('-concurrency', type=int, default=1, metavar='N',
                     help='Number of concurrent games')
-parser.add_argument('-games-file', type=pathlib.Path,
+parser.add_argument('-games-file', metavar='PATH', type=pathlib.Path,
                     help='Store all games to this pgn')
 
 group = parser.add_argument_group('Engine options')
-group.add_argument('engine',
+group.add_argument('engine', metavar='ENGINE_NAME',
                    help='Engine to tune')
-group.add_argument('-conf', type=pathlib.Path,
+group.add_argument('-conf', type=pathlib.Path, metavar='PATH',
                    help='Engines.json file to load from')
-group.add_argument('-opp-engine',
+group.add_argument('-opp-engine', metavar='ENGINE_NAME',
                    help='Tune against a different engine')
 
 group = parser.add_argument_group('Games format')
-group.add_argument('-book', type=pathlib.Path,
+group.add_argument('-book', type=pathlib.Path, metavar='PATH',
                    help='pgn file with opening lines.')
-group.add_argument('-n-book', type=int, default=10,
+group.add_argument('-n-book', type=int, default=10, metavar='N',
                    help='Length of opening lines to use in plies.')
-group.add_argument('-games-per-encounter', type=int, default=2,
+group.add_argument('-games-per-encounter', type=int, default=2, metavar='N',
                    help='Number of book positions to play at each set of argument explored.')
-group.add_argument('-max-len', type=int, default=10000,
+group.add_argument('-max-len', type=int, default=10000, metavar='N',
                    help='Maximum length of game in plies before termination.')
 subgroup = group.add_mutually_exclusive_group(required=True)
-subgroup.add_argument('-movetime', type=int,
+subgroup.add_argument('-movetime', type=int, metavar='MS',
                       help='Time per move in ms')
-subgroup.add_argument('-nodes', type=int,
+subgroup.add_argument('-nodes', type=int, metavar='N',
                       help='Nodes per move')
 
 group = parser.add_argument_group('Options to tune')
@@ -70,17 +111,17 @@ group.add_argument('-c-opt', nargs='+', action='append', default=[],
                    help='Categorical option to tune')
 
 group = parser.add_argument_group('Optimization parameters')
-group.add_argument('-base-estimator', default='GP',
+group.add_argument('-base-estimator', default='GP', metavar='EST',
                    help='One of "GP", "RF", "ET", "GBRT"')
-group.add_argument('-n-initial-points', type=int, default=10,
+group.add_argument('-n-initial-points', type=int, default=10, metavar='N',
                    help='Number of points chosen before approximating with base estimator.')
-group.add_argument('-acq-func', default='gp_hedge',
+group.add_argument('-acq-func', default='gp_hedge', metavar='FUNC',
                    help='Can be either of "LCB" for lower confidence bound.'
                    ' "EI" for negative expected improvement.'
                    ' "PI" for negative probability of improvement.'
-                   ' "gp_hedge" (default) Probabilistically choose one of the above'
+                   ' "gp_hedge" Probabilistically chooses one of the above'
                    ' three acquisition functions at every iteration.')
-group.add_argument('-acq-optimizer', default='auto',
+group.add_argument('-acq-optimizer', default='auto', metavar='OPT',
                    help='Either "sampling" or "lbfgs"')
 group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
                    help='For the Gaussian Process optimizer, use this to specify the'
@@ -95,7 +136,7 @@ group.add_argument('-acq-kappa', default=1.96, metavar='KAPPA', type=float,
                    ' is "LCB".')
 
 group = parser.add_argument_group('Adjudication options')
-group.add_argument('-win-adj', nargs='*',
+group.add_argument('-win-adj', nargs='*', metavar='ADJ',
                    help='Adjudicate won game. Usage: '
                    '-win-adj count=4 score=400 '
                    'If the last 4 successive moves of white had a score of '
