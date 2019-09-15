@@ -70,8 +70,9 @@ class Arena:
                     node.comment += f'; {("White","Black")[ply%2]} resgined'
                     return
 
-                node = node.add_variation(play.move, comment=f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
-                                          f' {play.info.get("time",0)}s')
+                node = node.add_variation(play.move, comment=
+                        f'{play.info.get("score",0)}/{play.info.get("depth",0)}'
+                        f' {play.info.get("time",0)}s')
 
                 # Adjudicate game by score, save score in wpov
                 try:
@@ -135,11 +136,8 @@ class Arena:
                     if er is not None:
                         return games, score, er
                 result = game.headers["Result"]
-                #print('res', result, 'col', color == WHITE)
                 if result == '1-0' and color == WHITE or result == '0-1' and color == BLACK:
-                   # print('score', 1)
                     score += 1
                 if result == '1-0' and color == BLACK or result == '0-1' and color == WHITE:
-                   # print('score', -1)
                     score -= 1
         return games, score/games_played, None

@@ -63,6 +63,9 @@ parser = argparse.ArgumentParser(
               "protocol": "uci"
             }]
             \n\n
+            Tip: Use `-log-file data.log` to save the results so you can easily
+            recover from a crash, or try new arguments.
+            \n
             Tip: If you have too many options to handle, tune.py can read its
             arguemnts from a file with `tune.py @argumentfile`.
             '''),
@@ -78,35 +81,46 @@ parser.add_argument('-concurrency', type=int, default=1, metavar='N',
                     help='Number of concurrent games')
 parser.add_argument('-games-file', metavar='PATH', type=pathlib.Path,
                     help='Store all games to this pgn')
+parser.add_argument('-result-interval', metavar='N', type=int, default=50,
+                    help='How often to print the best estimate so far. 0 for never')
 
-group = parser.add_argument_group('Engine options')
-group.add_argument('engine', metavar='ENGINE_NAME',
+engine_group = parser.add_argument_group('Engine options')
+engine_group.add_argument('engine', metavar='ENGINE_NAME',
                    help='Engine to tune')
-group.add_argument('-conf', type=pathlib.Path, metavar='PATH',
+engine_group.add_argument('-conf', type=pathlib.Path, metavar='PATH',
                    help='Engines.json file to load from')
-group.add_argument('-opp-engine', metavar='ENGINE_NAME',
+engine_group.add_argument('-opp-engine', metavar='ENGINE_NAME',
                    help='Tune against a different engine')
 
-group = parser.add_argument_group('Games format')
-group.add_argument('-book', type=pathlib.Path, metavar='PATH',
+games_group = parser.add_argument_group('Games format')
+games_group.add_argument('-book', type=pathlib.Path, metavar='PATH',
                    help='pgn file with opening lines.')
-group.add_argument('-n-book', type=int, default=10, metavar='N',
+games_group.add_argument('-n-book', type=int, default=10, metavar='N',
                    help='Length of opening lines to use in plies.')
-group.add_argument('-games-per-encounter', type=int, default=2, metavar='N',
+games_group.add_argument('-games-per-encounter', type=int, default=2, metavar='N',
                    help='Number of book positions to play at each set of argument explored.')
-group.add_argument('-max-len', type=int, default=10000, metavar='N',
+games_group.add_argument('-max-len', type=int, default=10000, metavar='N',
                    help='Maximum length of game in plies before termination.')
-subgroup = group.add_mutually_exclusive_group(required=True)
+games_group.add_argument('-win-adj', nargs='*', metavar='ADJ',
+                   help='Adjudicate won game. Usage: '
+                   '-win-adj count=4 score=400 '
+                   'If the last 4 successive moves of white had a score of '
+                   '400 cp or more and the last 4 successive moves of black '
+                   'had a score of -400 or less then that game will be '
+                   'adjudicated to a win for white. When the situation is '
+                   'reversed black would win. '
+                   f'Default values: count=4, score={Arena.MATE_SCORE}')
+subgroup = games_group.add_mutually_exclusive_group(required=True)
 subgroup.add_argument('-movetime', type=int, metavar='MS',
                       help='Time per move in ms')
 subgroup.add_argument('-nodes', type=int, metavar='N',
                       help='Nodes per move')
 
-group = parser.add_argument_group('Options to tune')
-group.add_argument('-opt', nargs='+', action='append', default=[],
+tune_group = parser.add_argument_group('Options to tune')
+tune_group.add_argument('-opt', nargs='+', action='append', default=[],
                    metavar=('NAME', 'LOWER, UPPER'),
                    help='Integer option to tune.')
-group.add_argument('-c-opt', nargs='+', action='append', default=[],
+tune_group.add_argument('-c-opt', nargs='+', action='append', default=[],
                    metavar=('NAME', 'VALUE'),
                    help='Categorical option to tune')
 
@@ -137,17 +151,6 @@ group.add_argument('-acq-kappa', default=1.96, metavar='KAPPA', type=float,
                    ' exploration over exploitation and vice versa. Used when the acquisition'
                    ' is "LCB".')
 
-group = parser.add_argument_group('Adjudication options')
-group.add_argument('-win-adj', nargs='*', metavar='ADJ',
-                   help='Adjudicate won game. Usage: '
-                   '-win-adj count=4 score=400 '
-                   'If the last 4 successive moves of white had a score of '
-                   '400 cp or more and the last 4 successive moves of black '
-                   'had a score of -400 or less then that game will be '
-                   'adjudicated to a win for white. When the situation is '
-                   'reversed black would win. '
-                   f'Default values: count=4, score={Arena.MATE_SCORE}')
-
 
 async def load_engine(engine_args, name, debug=False):
     assert engine_args and any(a['name'] == name for a in engine_args), \
@@ -157,6 +160,7 @@ async def load_engine(engine_args, name, debug=False):
     popen_args = {'env': {'PATH': os.environ['PATH']}}
     # Using $FILE in the workingDirectory allows an easy way to have engine.json
     # relative paths.
+    args['command'] = args['command'].replace('$FILE', curdir)
     if 'workingDirectory' in args:
         popen_args['cwd'] = args['workingDirectory'].replace('$FILE', curdir)
     # Note: We don't currently support shell in the command.
@@ -311,8 +315,9 @@ def parse_options(opts, copts, engine_options):
     return dim_names, dimensions
 
 
-def summarize(opt):
-    for kappa in [0] + list(np.logspace(-1, 1, 5)):
+def summarize(opt, steps):
+    print('Summarizing best values')
+    for kappa in [0] + list(np.logspace(-1, 1, steps-1)):
         new_opt = skopt.Optimizer(opt.space.dimensions,
                 acq_func='LCB',
                 acq_func_kwargs=dict(
@@ -391,7 +396,8 @@ async def main():
         acq_func_kwargs={
             'xi': args.acq_xi,
             'kappa': args.acq_kappa,
-            'noise': args.acq_noise
+            'noise': args.acq_noise,
+            'n_jobs': -1,
             },
         acq_optimizer_kwargs=dict(
             n_points=args.acq_n_points,
@@ -404,14 +410,17 @@ async def main():
         games_file = sys.stdout
 
     if args.log_file:
-        key_args = args.__dict__.copy()
+        key_args = {}
         # Not all arguments change the result, so no need to keep them in the key.
-        for key in ('n', 'games_file', 'concurrency', 'acq_optimizer'):
-            del key_args[key]
+        for arg_group in (games_group, tune_group, engine_group):
+            for arg in arg_group._group_actions:
+                key = arg.dest
+                key_args[key] = getattr(args, key)
         key = repr(sorted(key_args.items())).encode()
         data_logger = DataLogger(args.log_file, key=hashlib.sha256(key).hexdigest())
         cached_games = data_logger.load(opt)
     else:
+        print('No -log-file set. Results won\'t be saved.')
         data_logger = None
         cached_games = 0
 
@@ -432,6 +441,7 @@ async def main():
                 task.print_stack()
 
         def new_game(arena):
+            nonlocal started
             x = opt.ask()
             engine_args = x_to_args(x, dim_names, options)
             print(f'Starting {args.games_per_encounter} games {started}/{args.n} with {engine_args}')
@@ -445,22 +455,19 @@ async def main():
             setattr(task, 'tune_arena', arena)
             setattr(task, 'tune_game_id', started)
             task.add_done_callback(on_done)
+            started += 1
             return task
         tasks = []
         if args.n - started > 0:
-            xs = opt.ask(min(args.concurrency, args.n - started), strategy='cl_mean')
+            # TODO: Even though it knows we are asking for multiple points,
+            # we still often get all points equal. Specially if restarting
+            # from logged data. Maybe we should just sample random points ourselves.
+            xs = opt.ask(min(args.concurrency, args.n - started))
         else: xs = []
         for conc_id, x_init in enumerate(xs):
             enginea, engineb = engines[conc_id]
-            arena = Arena(
-                enginea,
-                engineb,
-                limit,
-                args.max_len,
-                win_adj_count,
-                win_adj_score)
+            arena = Arena(enginea, engineb, limit, args.max_len, win_adj_count, win_adj_score)
             tasks.append(new_game(arena))
-            started += 1
         while tasks:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             tasks = list(pending)
@@ -486,13 +493,14 @@ async def main():
                     data_logger.store(x, y)
                 if started < args.n:
                     tasks.append(new_game(arena))
-                    started += 1
+                if opt.models and game_id != 0 and args.result_interval > 0 and game_id % args.result_interval == 0:
+                    summarize(opt, steps=1)
+
     except asyncio.CancelledError:
         pass
 
     if opt.Xi and opt.models:
-        print('Summarizing best values')
-        summarize(opt)
+        summarize(opt, steps=6)
         if len(dimensions) == 1:
             plot_optimizer(opt, dimensions[0].low, dimensions[0].high)
     else:
