@@ -1,8 +1,12 @@
 import asyncio
 import itertools
 import random
+import logging
 
 import chess.pgn
+import chess.engine
+import chess
+from chess import WHITE, BLACK
 
 
 class Arena:
@@ -16,50 +20,36 @@ class Arena:
         self.win_adj_count = win_adj_count
         self.win_adj_score = win_adj_score
 
-    def adjudicate(self, score_hist, is_tuned_eng_white):
-        res_value, result, w_good_cnt, b_good_cnt = 0, None, 0, 0
-        k = len(score_hist) - 1
+    def adjudicate(self, score_hist):
+        if len(score_hist) > self.max_len:
+            return '1/2-1/2'
+        # Note win_adj_count is in moves, not plies
         count_max = self.win_adj_count * 2
+        if count_max > len(score_hist):
+            return None
+        # Test if white has been winning. Notice score_hist is from whites pov.
+        if all(v >= self.win_adj_score for v in score_hist[-count_max:]):
+            print(score_hist)
+            return '1-0'
+        # Test if black has been winning
+        if all(v <= -self.win_adj_score for v in score_hist[-count_max:]):
+            print(score_hist)
+            return '0-1'
+        return None
 
-        if k + 1 < count_max or abs(score_hist[k]) < self.win_adj_score:
-            return res_value, result
-
-        for i in itertools.count(k, step=-1):
-            if i <= k - count_max:
-                break
-            if score_hist[i] >= self.win_adj_score:
-                w_good_cnt += 1
-            elif score_hist[i] <= -self.win_adj_score:
-                b_good_cnt += 1
-
-        if w_good_cnt >= count_max or b_good_cnt >= count_max:
-            res_value = -1
-            if w_good_cnt >= count_max and is_tuned_eng_white:
-                res_value = 1
-            elif b_good_cnt >= count_max and not is_tuned_eng_white:
-                res_value = 1
-
-            if res_value > 0:
-                result = '1-0' if is_tuned_eng_white else '0-1'
-            else:
-                result = '1-0' if not is_tuned_eng_white else '0-1'
-
-        return res_value, result
-
-    async def play_game(self, init_node, game_id, flip=False):
+    async def play_game(self, init_node, game_id, white, black):
         """ Yields (play, error) tuples. Also updates the game with headers and moves. """
-        white, black = (
-            self.enginea, self.engineb) if not flip else (
-            self.engineb, self.enginea)
         try:
             game = init_node.root()
             node = init_node
             score_hist = []
-            for ply in itertools.count(int(node.board().turn == chess.BLACK)):
+            for ply in itertools.count(int(node.board().turn == BLACK)):
                 board = node.board()
-                if ply > self.max_len:
+
+                adj_result = self.adjudicate(score_hist)
+                if adj_result is not None:
                     game.headers.update({
-                        'Result': '1/2-1/2',
+                        'Result': adj_result,
                         'Termination': 'adjudication'
                     })
                     return
@@ -88,16 +78,9 @@ class Arena:
                     score_hist.append(play.info['score'].white().score(
                         mate_score=max(self.win_adj_score, Arena.MATE_SCORE)))
                 except KeyError:
+                    logging.debug('Engine didn\'t return a score for adjudication. Assuming 0.')
                     score_hist.append(0)
-                except Exception:
-                    score_hist.append(0)
-                res_value, result = self.adjudicate(score_hist, not flip)
-                if res_value != 0:
-                    game.headers.update({
-                        'Result': result,
-                        'Termination': 'adjudication based on score'
-                    })
-                    return
+
         except (asyncio.CancelledError, KeyboardInterrupt) as e:
             print('play_game Cancelled')
             # We should get CancelledError when the user pressed Ctrl+C
@@ -125,10 +108,11 @@ class Arena:
     async def run_games(self, book, game_id=0, games_played=2):
         score = 0
         games = []
+        assert games_played % 2 == 0
         for r in range(games_played//2):
             init_board = random.choice(book)
-            for color in range(2):
-                white, black = (self.enginea, self.engineb) if color == chess.WHITE \
+            for color in [WHITE, BLACK]:
+                white, black = (self.enginea, self.engineb) if color == WHITE \
                     else (self.engineb, self.enginea)
                 game_round = games_played * game_id + color + 2*r
                 game = chess.pgn.Game({
@@ -146,13 +130,16 @@ class Arena:
                 for move in init_board.move_stack:
                     node = node.add_variation(move, comment='book')
                 # Run engines
-                async for _play, er in self.play_game(node, game_round, flip=bool(color)):
+                async for _play, er in self.play_game(node, game_round, white, black):
                     # If an error occoured, return as much as we got
                     if er is not None:
                         return games, score, er
                 result = game.headers["Result"]
-                if result == '1-0' and color == chess.WHITE or result == '0-1' and color == chess.BLACK:
+                #print('res', result, 'col', color == WHITE)
+                if result == '1-0' and color == WHITE or result == '0-1' and color == BLACK:
+                   # print('score', 1)
                     score += 1
-                if result == '1-0' and color == chess.BLACK or result == '0-1' and color == chess.WHITE:
+                if result == '1-0' and color == BLACK or result == '0-1' and color == WHITE:
+                   # print('score', -1)
                     score -= 1
-        return games, score, None
+        return games, score/games_played, None

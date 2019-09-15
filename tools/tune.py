@@ -1,7 +1,6 @@
 import math
 import hashlib
 import functools
-import logging
 import sys
 import json
 import pathlib
@@ -12,6 +11,7 @@ import warnings
 import itertools
 import re
 import os
+import logging
 from collections import namedtuple
 
 import chess.pgn
@@ -121,9 +121,11 @@ group.add_argument('-acq-func', default='gp_hedge', metavar='FUNC',
                    ' "PI" for negative probability of improvement.'
                    ' "gp_hedge" Probabilistically chooses one of the above'
                    ' three acquisition functions at every iteration.')
-group.add_argument('-acq-optimizer', default='auto', metavar='OPT',
-                   help='Either "sampling" or "lbfgs"')
-group.add_argument('-acq-noise', default='gaussian', metavar='VAR',
+group.add_argument('-acq-optimizer', default='sampling', metavar='OPT',
+                   help='Either "sampling", "lbfgs" or "auto"')
+group.add_argument('-acq-n-points', default=10000, metavar='N',
+                   help='Number of points to sample when acq-optimizer = sampling.')
+group.add_argument('-acq-noise', default=10, metavar='VAR',
                    help='For the Gaussian Process optimizer, use this to specify the'
                    ' variance of the assumed noise. Larger values mean more exploration.')
 group.add_argument('-acq-xi', default=0.01, metavar='XI', type=float,
@@ -309,25 +311,34 @@ def parse_options(opts, copts, engine_options):
     return dim_names, dimensions
 
 
-def summarize(opt, samples):
-    X = np.vstack((opt.space.rvs(n_samples=samples), opt.Xi))
-    Xt = opt.space.transform(X)
-    y_pred, sigma = opt.models[-1].predict(Xt, return_std=True)
-    y_pred = -y_pred  # Change to maximization
-    for kappa in range(4):
-        i = np.argmax(y_pred - kappa * sigma)
-
+def summarize(opt):
+    for kappa in [0] + list(np.logspace(-1, 1, 5)):
+        new_opt = skopt.Optimizer(opt.space.dimensions,
+                acq_func='LCB',
+                acq_func_kwargs=dict(
+                    kappa=kappa/5,
+                    n_jobs=-1,
+                    ),
+                acq_optimizer='lbfgs',
+                acq_optimizer_kwargs=dict(
+                    n_restarts_optimizer=100,
+                    )
+                )
+        new_opt.tell(opt.Xi, opt.yi)
+        x = new_opt.ask()
+        y, sigma = new_opt.models[-1].predict([x], return_std=True)
+        y = -y # Change back from minimization to maximization
         def score_to_elo(score):
             if score <= -1:
                 return float('inf')
             if score >= 1:
                 return -float('inf')
-            return - 400 * math.log10(2 / (score + 1) - 1)
-        elo = score_to_elo(y_pred[i] / 2)
-        pm = max(abs(score_to_elo(y_pred[i] + sigma[i]) - elo),
-                 abs(score_to_elo(y_pred[i] + sigma[i]) - elo))
-        print(f'Best expectation (κ={kappa}): {X[i]}'
-              f' = {y_pred[i]/2:.3f} ± {sigma[i]/2:.3f}'
+            return 400 * math.log10((1+score)/(1-score))
+        elo = score_to_elo(y)
+        pm = max(abs(score_to_elo(y + sigma) - elo),
+                 abs(score_to_elo(y - sigma) - elo))
+        print(f'Best expectation (κ={kappa:.1f}): {x}'
+              f' = {y[0]:.3f} ± {sigma[0]:.3f}'
               f' (ELO-diff {elo:.3f} ± {pm:.3f})')
 
 
@@ -381,7 +392,10 @@ async def main():
             'xi': args.acq_xi,
             'kappa': args.acq_kappa,
             'noise': args.acq_noise
-            }
+            },
+        acq_optimizer_kwargs=dict(
+            n_points=args.acq_n_points,
+        )
     )
 
     if args.games_file:
@@ -392,7 +406,7 @@ async def main():
     if args.log_file:
         key_args = args.__dict__.copy()
         # Not all arguments change the result, so no need to keep them in the key.
-        for key in ('n', 'games_file', 'concurrency'):
+        for key in ('n', 'games_file', 'concurrency', 'acq_optimizer'):
             del key_args[key]
         key = repr(sorted(key_args.items())).encode()
         data_logger = DataLogger(args.log_file, key=hashlib.sha256(key).hexdigest())
@@ -433,8 +447,9 @@ async def main():
             task.add_done_callback(on_done)
             return task
         tasks = []
-        xs = opt.ask(min(args.concurrency, args.n - started)
-                     ) if args.n - started > 0 else []
+        if args.n - started > 0:
+            xs = opt.ask(min(args.concurrency, args.n - started), strategy='cl_mean')
+        else: xs = []
         for conc_id, x_init in enumerate(xs):
             enginea, engineb = engines[conc_id]
             arena = Arena(
@@ -453,7 +468,6 @@ async def main():
                 res = task.result()
                 arena, x, game_id = task.tune_arena, task.tune_x, task.tune_game_id
                 games, y, er = res
-                y /= args.games_per_encounter # Normalize to [-1, 1] range
                 for game in games:
                     print(game, end='\n\n', file=games_file, flush=True)
                 if er:
@@ -478,7 +492,7 @@ async def main():
 
     if opt.Xi and opt.models:
         print('Summarizing best values')
-        summarize(opt, samples=args.n)
+        summarize(opt)
         if len(dimensions) == 1:
             plot_optimizer(opt, dimensions[0].low, dimensions[0].high)
     else:
