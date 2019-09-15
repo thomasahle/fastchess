@@ -153,11 +153,21 @@ async def load_engine(engine_args, name, debug=False):
     args = next(a for a in engine_args if a['name'] == name)
     curdir = str(pathlib.Path(__file__).parent.parent)
     popen_args = {'env': {'PATH': os.environ['PATH']}}
+    # Using $FILE in the workingDirectory allows an easy way to have engine.json
+    # relative paths.
     if 'workingDirectory' in args:
         popen_args['cwd'] = args['workingDirectory'].replace('$FILE', curdir)
+    # Note: We don't currently support shell in the command.
+    # We could do that using shutils.
     cmd = args['command'].split()
+    # Shortcut for python engines who want to use the same ececutable as tune
     if cmd[0] == '$PYTHON':
         cmd[0] = sys.executable
+    # Hack for Windows systems that don't understand popen(cwd=..) for some reason
+    if os.name == 'nt':
+        wd_cmd = pathlib.Path(popen_args['cwd'], cmd[0])
+        if wd_cmd.is_file():
+            cmd[0] = str(wd_cmd)
     if args['protocol'] == 'uci':
         _, engine = await chess.engine.popen_uci(cmd, **popen_args)
     elif args['protocol'] == 'xboard':
