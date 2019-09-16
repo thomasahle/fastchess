@@ -29,11 +29,9 @@ class Arena:
             return None
         # Test if white has been winning. Notice score_hist is from whites pov.
         if all(v >= self.win_adj_score for v in score_hist[-count_max:]):
-            print(score_hist)
             return '1-0'
         # Test if black has been winning
         if all(v <= -self.win_adj_score for v in score_hist[-count_max:]):
-            print(score_hist)
             return '0-1'
         return None
 
