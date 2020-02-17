@@ -1,10 +1,12 @@
-Teaching Fasttext to play Chess
+Teaching FastText to play Chess
 ===============================
 
-This is an experiment testing how well the simple one-layer + soft-max model of fasttext.cc
-can learn to predict the best chess moves.
+FastChess is a chess engine predicting the next move using the http://fastText.cc text classification library.
+In other words, it is a simple one-layer + soft-max model, taking the board state as a vector and outputting a vector of probabilities for each possible move.
 
 The project also contains a Monte Carlo Tree Search, following by Alpha Zero, which combines with the simple linear model to provide a higher quality of play.
+
+You can play against FastChess on Lichess: https://lichess.org/@/fastchess-engine (requires log-in).
 
 Screenshot
 ==========
