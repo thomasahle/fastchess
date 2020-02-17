@@ -115,14 +115,12 @@ class MCTS_Controller:
             for i in itertools.count():
                 rolls += 1
                 self.node.rollout()
-                if i % STAT_INTERVAL == 0:
+                if self.should_stop or \
+                        max_time > 0 and time.time() > start_time + max_time or \
+                        max_rolls > 0 and rolls >= max_rolls:
+                    break
+                if (i+1) % STAT_INTERVAL == 0:
                     kl_div = self.print_stats(first, pvs)
-                    if self.should_stop:
-                        break
-                    if max_time > 0 and time.time() > start_time + max_time:
-                        break
-                    if max_rolls > 0 and rolls >= max_rolls:
-                        break
                     if min_kldiv > 0 and kl_div < min_kldiv:
                         break
                     first = False

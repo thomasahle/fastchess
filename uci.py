@@ -275,7 +275,7 @@ class UCI:
                 # We allow a fair bit of extra time to try and allow the kl_div
                 # mechanism to really work, but never more than half of our remaining
                 # time.
-                max_time = min(4 * time_per_move, time_left / 2)
+                max_time = time_left / (movestogo/2 + 1) + inc
                 mean_rolls = self.nps * time_per_move
                 min_kldiv = self.roll_kldiv / mean_rolls
 
