@@ -1,3 +1,4 @@
+import asyncio
 import chess
 import sys
 import re
@@ -6,6 +7,9 @@ from collections import namedtuple
 from enum import Enum
 import time
 import os.path
+import signal
+import concurrent.futures
+import threading
 
 import fastchess
 import mcts
@@ -121,6 +125,8 @@ class UCI:
         # instabilities.
         self.roll_kldiv = 1
         self.tot_rolls = 0
+        
+        self.go_lock = threading.Lock()
 
     def parse(self, line):
         cmd, arg = line.split(' ', 1) if ' ' in line else (line, '')
@@ -238,23 +244,41 @@ class UCI:
         for move in moves:
             self.board.push(move)
 
-    def go(self, searchmoves=(), ponder=False, wtime=0, btime=0, winc=0, binc=0,
-           movestogo=40, depth=0, nodes=0, mate=0, movetime=0, infinite=False):
+    def go(self, **args):
         """ See UCI documentation for what the options mean. """
-        if searchmoves or ponder or mate or depth:
+        with self.go_lock:
+            self._go(**args)
+
+    def _go(self, searchmoves=(), ponder=False, wtime=0, btime=0, winc=0, binc=0,
+           movestogo=40, depth=0, nodes=0, mate=0, movetime=0, infinite=False):
+        if searchmoves or mate or depth:
             print('info string Ignoring unsupported go options')
+        if ponder:
+            self.ponder_search_args = dict(wtime=wtime, btime=btime, winc=winc, binc=binc,
+                movestogo=movestogo, depth=depth, nodes=nodes, mate=mate, movetime=movetime,
+                infinite=infinite)
+            self._ponderhit = False
+            infinite = True
+            # Like Leela, we cheat UCI and ponder over all opponent moves
+            board = self.board.copy()
+            ponder_move = board.pop()
+        else:
+            board = self.board
 
         min_kldiv = max_time = max_rolls = 0
+        
+        if infinite:
+            max_time = 10**6
 
-        if movetime:
+        elif movetime:
             max_time = movetime / 1000
 
         elif nodes:
             max_rolls = nodes
 
         else:
-            time_left = wtime / 1000 if self.board.turn == chess.WHITE else btime / 1000
-            inc = winc / 1000 if self.board.turn == chess.WHITE else binc / 1000
+            time_left = wtime / 1000 if board.turn == chess.WHITE else btime / 1000
+            inc = winc / 1000 if board.turn == chess.WHITE else binc / 1000
             time_per_move = time_left / (movestogo + 1) + inc
 
             # If the opponent has a lot less time than us, we might as well use a bit more.
@@ -275,7 +299,7 @@ class UCI:
                 # We allow a fair bit of extra time to try and allow the kl_div
                 # mechanism to really work, but never more than half of our remaining
                 # time.
-                max_time = time_left / (movestogo/2 + 1) + inc
+                max_time = time_left / (movestogo/4 + 1) + inc
                 mean_rolls = self.nps * time_per_move
                 min_kldiv = self.roll_kldiv / mean_rolls
 
@@ -287,8 +311,17 @@ class UCI:
             use_mcts = True
 
         temp = self.options['Temperature'] / 100
-        node, stats = self.controller.find_move(self.board, min_kldiv=min_kldiv, max_rolls=max_rolls,
-                                                max_time=max_time, temperature=temp, pvs=self.options['MultiPV'], use_mcts=use_mcts)
+
+        # The handlers don't work from threads
+        # Handle Ctrl+C during (e.g. infinite) search
+        #old_handler = signal.signal(signal.SIGINT, lambda s,f: self.stop())
+
+        node, stats = self.controller.find_move(
+            board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time,
+            temperature=temp, pvs=self.options['MultiPV'], use_mcts=use_mcts)
+
+        # Restore normal handler
+        #signal.signal(signal.SIGINT, old_handler)
 
         if use_mcts:
             # Conservative discounting using the harmonic mean
@@ -304,34 +337,49 @@ class UCI:
             self.roll_kldiv = (roll_kldiv * stats.rolls + self.roll_kldiv * self.tot_rolls) \
                 / (stats.rolls + self.tot_rolls)
             self.tot_rolls += stats.rolls
-            print(
-                f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls} kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
+            print(f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls}'
+                  f' kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
+        
+        if ponder:
+            # We have to say something to indicate we stopped, but since we
+            # are thinking from the 'wrong' position, it would be confusing to
+            # give an actual move.
+            if not self._ponderhit:
+                random_move = next(iter(self.board.legal_moves))
+                print('bestmove', random_move)
+            # If pondering we don't output anything.
+        else:
+            # Hack to ensure we can always get the bestmove from python-chess.
+            # It only gets it from pv rather than the actual bestmove response.
+            print(f'info pv {node.move.uci()}')
 
-        # Hack to ensure we can always get the bestmove from python-chess
-        print(f'info pv {node.move.uci()}')
-
-        parts = ['bestmove', node.move.uci()]
-        if node.children:
-            ponder_node = max(node.children, key=lambda n: n.N)
-            parts += ['ponder', ponder_node.move.uci()]
-        print(' '.join(parts))
+            parts = ['bestmove', node.move.uci()]
+            if node.children:
+                ponder_move = max(node.children, key=lambda n: n.N).move
+                parts += ['ponder', ponder_move.uci()]
+            print(*parts)
 
     def stop(self):
         self.controller.stop()
 
     def ponderhit(self):
-        pass
+        # FIXME: This is hopelessly un-theadsafe.
+        # A ponderhit right after 'go ponder' was called might reset _ponderhit.
+        self._ponderhit = True
+        self.controller.stop()
+        self.go(**self.ponder_search_args)
 
 
 def main():
     uci = UCI()
-    while True:
-        cmd = input()
-        print('stderr', cmd, file=sys.stderr)
-        if cmd == 'quit':
-            break
-        uci.parse(cmd)
-
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        while True:
+            cmd = input()
+            print('stderr', cmd, file=sys.stderr)
+            if cmd == 'quit':
+                return
+            executor.submit(uci.parse, cmd)
 
 if __name__ == '__main__':
     main()
+

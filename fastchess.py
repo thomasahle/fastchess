@@ -9,11 +9,8 @@ import pst
 
 
 def win_to_cp(win):
-    return math.tan(win * math.pi / 2) * 100
-
-
-def cp_to_win(cp):
-    return math.atan(cp / 100) * 2 / math.pi
+    ''' Used because uci interface requires cp scores. '''
+    return pst.from_win(win)
 
 
 def board_to_words(board, occ=False):
@@ -64,7 +61,7 @@ class Model:
         # maybe its an occ model?
         self.occ = False
 
-        # Start with bias
+        # Start with bias. No bias for eval.
         bias = np.hstack([[0], vectors[0]])
 
         # Parse remaining words
@@ -78,12 +75,14 @@ class Model:
                     for piece_type in chess.PIECE_TYPES:
                         piece_to_vec[piece_type, color, sq] += np.hstack([[0], v])
             elif w.endswith('-C'):
-                e = 0  # Castling rights don't currently have a value
+                e = pst.castling[sq]
                 castling[sq] = np.hstack([[e], v])
             else:
-                piece = chess.Piece.from_symbol(w[2])
-                e = self.get_piece_eval(piece.piece_type, piece.color, sq)
-                piece_to_vec[piece.piece_type, piece.color, sq] += np.hstack([[e], v])
+                p = chess.Piece.from_symbol(w[2])
+                e = pst.piece[p.piece_type-1] * (1 if p.color else -1)
+                e += pst.pst[0 if p.color else 1][p.piece_type-1][sq]
+                #print(w[2], p, e)
+                piece_to_vec[p.piece_type, p.color, sq] += np.hstack([[e], v])
 
         # Convert to two-colours
         # We keep a record of the board from both perspectives
@@ -105,74 +104,30 @@ class Model:
         # and the second entry will be the evaluation
         self.move_to_id = {move: i + 2 for i, move in enumerate(self.moves)}
 
-    def get_piece_eval(self, piece_type, color, square):
-        symbol = chess.Piece(piece_type, color).symbol().upper()
-        if color == chess.WHITE:
-            return pst.piece[symbol] + pst.pst[symbol][chess.square_mirror(square)]
-        else:
-            return - (pst.piece[symbol] + pst.pst[symbol][square])
-
     def get_eval(self, vec, board, debug=False):
         """ Returns a single score relative to board.turn """
-        # TODO: It's interesting whether a model trained directly on the [-1,1] range
-        # does better or worse than this.
 
-        res = cp_to_win(vec[1 - int(board.turn), EVAL_INDEX])
+        cp = vec[1 - int(board.turn), EVAL_INDEX]
 
         if debug:
             assert vec[0, EVAL_INDEX] == -vec[1, EVAL_INDEX]
+            win = pst.to_win(cp)
             fs = self._eval_from_scratch(vec, board)
-            assert np.allclose(res, fs)
+            assert np.allclose(win, fs)
 
-        return res
+        # Features that don't require incremental updating
+        if board.is_check():
+            cp += pst.check
+        cp += pst.turn
 
-    def _eval_from_scratch(self, vec, board):
-        # We first calculate the value relative to white
-        res = 0
-        for square, piece in board.piece_map().items():
-            p = piece.symbol()
-            if p.isupper():
-                res += pst.piece[p] + pst.pst[p][chess.square_mirror(square)]
-            else:
-                p = p.upper()
-                res -= pst.piece[p] + pst.pst[p][square]
-        # Normalize in [-1, 1]
-        res = cp_to_win(res)
-        # Then flip it to the current player
-        return res if board.turn == chess.WHITE else -res
+        #print(board)
+        #print(cp)
+
+        return pst.to_win(cp)
 
     def get_top_k(self, vec, k):
         for i in np.argpartition(vec, -k)[-k:]:
             yield vec[i], self.moves[i]
-
-    def from_scratch(self, board, debug=False):
-        ''' Just for testing that the gradual method works. '''
-        vec = self.bias.copy()
-        for s, p in board.piece_map().items():
-            vec += self.piece_to_vec[p.piece_type, p.color, s]
-        for sq in [chess.H1, chess.H8, chess.A1, chess.A8]:
-            if board.castling_rights & chess.BB_SQUARES[sq]:
-                vec += self.castling[sq]
-
-        if debug:
-            v1 = self.ft.get_sentence_vector(
-                ' '.join(board_to_words(board, occ=self.occ)))
-            v2 = self.ft.get_sentence_vector(
-                ' '.join(
-                    board_to_words(
-                        board.mirror(),
-                        occ=self.occ)))
-            sv = (self.ft.get_output_matrix() @ np.vstack([v1, v2]).T).T
-            n = vec[0, 1]
-            v = vec[:, 2:]
-            if not np.allclose(sv, v / n, atol=1e-5, rtol=1e-2):
-                print(sv)
-                print(v / n)
-                print(np.max(np.abs(sv - vec / n)))
-                print(np.max(sv / (v / n)), np.min(sv / (v / n)))
-                assert False
-
-        return vec
 
     # TODO: Maybe we should just subclass chess.Board like in feeks:
     # https://github.com/flok99/feeks/blob/master/board.py
@@ -282,3 +237,49 @@ class Model:
         scores = np.exp(scores - np.max(scores))
         scores /= np.sum(scores)
         return zip(scores, moves)
+
+    def _eval_from_scratch(self, vec, board):
+        # We first calculate the value relative to white
+        res = 0
+        for square, p in board.piece_map().items():
+            e = pst.piece[p.piece_type-1] * (1 if p.color else -1)
+            e += pst.pst[0 if p.color else 1][p.piece_type-1][sq]
+            res += e
+        for sq in [chess.A1, chess.A8, chess.H1, chess.H8]:
+            if board.castling_rights & sq:
+                res += pst.castling[sq]
+        # Normalize in [-1, 1]
+        res = pst.to_win(res)
+        # Then flip it to the current player
+        return res if board.turn == chess.WHITE else -res
+
+    def from_scratch(self, board, debug=False):
+        ''' Just for testing that the gradual method works. '''
+        vec = self.bias.copy()
+        for s, p in board.piece_map().items():
+            vec += self.piece_to_vec[p.piece_type, p.color, s]
+        for sq in [chess.H1, chess.H8, chess.A1, chess.A8]:
+            if board.castling_rights & chess.BB_SQUARES[sq]:
+                vec += self.castling[sq]
+
+        if debug:
+            v1 = self.ft.get_sentence_vector(
+                ' '.join(board_to_words(board, occ=self.occ)))
+            v2 = self.ft.get_sentence_vector(
+                ' '.join(
+                    board_to_words(
+                        board.mirror(),
+                        occ=self.occ)))
+            sv = (self.ft.get_output_matrix() @ np.vstack([v1, v2]).T).T
+            n = vec[0, 1]
+            v = vec[:, 2:]
+            if not np.allclose(sv, v / n, atol=1e-5, rtol=1e-2):
+                print(sv)
+                print(v / n)
+                print(np.max(np.abs(sv - vec / n)))
+                print(np.max(sv / (v / n)), np.min(sv / (v / n)))
+                assert False
+
+        return vec
+
+
