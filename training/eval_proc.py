@@ -5,6 +5,7 @@ import scipy.sparse
 import numpy as np
 import os
 from pathlib import Path
+from proc import binary_encode
 import argparse
 import numpy as np
 
@@ -38,7 +39,7 @@ for p in Path('.').glob(args.files):
 
             if args.moves:
                 for node in game.mainline():
-                    rows.append(encode(node.board()))
+                    rows.append(binary_encode(node.board()))
                     ress.append(encode_move(node.move))
             else:
                 res = {'1-0': 1, '0-1': -1,
@@ -46,7 +47,7 @@ for p in Path('.').glob(args.files):
                 ress += [res] * POS_PER_GAME
 
                 nodes = random.sample(list(game.mainline()), POS_PER_GAME)
-                positions = [encode(node.board()) for node in nodes]
+                positions = [binary_encode(node.board()) for node in nodes]
                 rows += random.sample(positions, POS_PER_GAME)
 
     print()
