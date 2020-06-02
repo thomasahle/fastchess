@@ -241,9 +241,9 @@ class Model:
     def _eval_from_scratch(self, vec, board):
         # We first calculate the value relative to white
         res = 0
-        for square, p in board.piece_map().items():
+        for s, p in board.piece_map().items():
             e = pst.piece[p.piece_type-1] * (1 if p.color else -1)
-            e += pst.pst[0 if p.color else 1][p.piece_type-1][sq]
+            e += pst.pst[0 if p.color else 1][p.piece_type-1][s]
             res += e
         for sq in [chess.A1, chess.A8, chess.H1, chess.H8]:
             if board.castling_rights & sq:
