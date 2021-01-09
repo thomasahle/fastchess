@@ -7,6 +7,7 @@ In other words, it is a simple one-layer + soft-max model, taking the board stat
 The project also contains a Monte Carlo Tree Search, following by Alpha Zero, which combines with the simple linear model to provide a higher quality of play.
 
 You can play against FastChess on Lichess: https://lichess.org/@/fastchess-engine (requires log-in).
+It's current rating (January 2021) is 2052 Bullet and 1901 Blitz.
 
 Screenshot
 ==========
