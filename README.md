@@ -46,9 +46,9 @@ Train the model
 ===============
 
 There are two ways to train the model.
-The first one is to download a set of pgn files, like http://data.lczero.org/files/ and run
+The first one is to download a set of pgn files, like https://storage.lczero.org/files/training_pgns/ and run
 
-    python proc.py 'cclr/**/*.pgn' -test proc.test -train proc.train
+    python proc.py 'ccrl/**/*.pgn' -test proc.test -train proc.train
     fasttext supervised -input proc.train -output proc.model -t 0 -neg 0 -epoch 1
     fasttext test proc.model.bin proc.test 1
     mv proc.model.bin model.bin
