@@ -1,17 +1,12 @@
-import asyncio
 import chess
 import sys
 import re
 import itertools
 from collections import namedtuple
-from enum import Enum
-import time
 import os.path
-import signal
-import concurrent.futures
-import threading
 from enum import Enum
 import random
+import select
 
 import fastchess
 import mcts
@@ -36,6 +31,7 @@ class Unbuffered(object):
 
 
 sys.stdout = Unbuffered(sys.stdout)
+print('Moving stderr to log', file=sys.stderr)
 sys.stderr = open('log', 'a')
 
 
@@ -79,12 +75,11 @@ class CaseInsensitiveDict(dict):
 
 
 # There is also chess.engine.Option
-class Type(Enum):
-    Spin = namedtuple('spin', ['default', 'min', 'max'])
-    String = namedtuple('string', ['default'])
-    Check = namedtuple('check', ['default'])
-    Button = namedtuple('button', [])
-    Combo = namedtuple('combo', ['default', 'vars'])
+Type_Spin = namedtuple('spin', ['default', 'min', 'max'])
+Type_String = namedtuple('string', ['default'])
+Type_Check = namedtuple('check', ['default'])
+Type_Button = namedtuple('button', [])
+Type_Combo = namedtuple('combo', ['default', 'vars'])
 
 
 class State(Enum):
@@ -98,24 +93,24 @@ class State(Enum):
 class UCI:
     def __init__(self):
         self.debug = False
-        self.state = Mode.Inactive
+        self.state = State.Inactive
         self.board = chess.Board()
         self.option_types = {
-            'ModelPath': Type.String(default='models/model.bin'),
+            'ModelPath': Type_String(default='models/model.bin'),
             # Play random moves from the posterior distribution to the temp/100 power.
-            'Temperature': Type.Spin(default=0, min=0, max=100),
-            'MultiPV': Type.Spin(default=0, min=0, max=10),
+            'Temperature': Type_Spin(default=0, min=0, max=100),
+            'MultiPV': Type_Spin(default=0, min=0, max=10),
             # Cpuct 4.3 seems good with current treshold values. Previously 2.8 seemed
             # better.
-            'MilliCPUCT': Type.Spin(default=4300, min=0, max=10000),
+            'MilliCPUCT': Type_Spin(default=4300, min=0, max=10000),
 
             # Legal moves will get at least this policy score/100
-            'LegalPolicyTreshold': Type.Spin(default=-3568, min=-10000, max=10000),
-            'CapturePolicyTreshold': Type.Spin(default=-1639, min=-10000, max=10000),
+            'LegalPolicyTreshold': Type_Spin(default=-3568, min=-10000, max=10000),
+            'CapturePolicyTreshold': Type_Spin(default=-1639, min=-10000, max=10000),
             # Adding a bonus to moves that give check is currently not used, since
             # tuning found it irrelevant with current models. It might still be
             # usedful for sovling chess puzzles etc.
-            'CheckPolicyTreshold': Type.Spin(default=-10000, min=-10000, max=10000),
+            'CheckPolicyTreshold': Type_Spin(default=-10000, min=-10000, max=10000),
 
             # TODO: Leela has many interesting options that we may consider, like
             # fpu-value (We use -.99), fpu-at-root (they use 1), policy-softmax-temp
@@ -128,6 +123,7 @@ class UCI:
         # These objects depend on options to be set. (ModelPath in particular.)
         self.fastchess_model = None
         self.controller = None
+        self.searcher = None # The iter we get from the controller
         self.setoption('', '')
 
         # Statistics for time management
@@ -248,19 +244,14 @@ class UCI:
 
 
     def beat(self):
-        if self.state == State.Searching:
-            self.controller.beat() # Maybe there is some better coroute way to do this.
-        elif self.state = State.Transitioning:
-            res = next(self.controller)
-            if res is not None:
-                node, stats = res
-                self._finish_stopping(node, stats, transitioning=True)
-        elif self.state = State.Stopping:
-            res = next(self.controller)
+        if self.state in [State.Searching, State.Transitioning, State.Stopping]:
+            res = next(self.searcher)
+            # If we stopped, it doesn't matter if we wanted to or not.
+            # Maybe the time just ran out, or the game ended.
             if res is not None:
                 node, stats = res
                 self._finish_stopping(node, stats)
-        return self.state == State.Inactive
+        return self.state is not State.Inactive
 
     def position(self, board, moves):
         assert self.state == State.Inactive
@@ -271,11 +262,11 @@ class UCI:
     def go(self, **args):
         """ See UCI documentation for what the options mean. """
         assert self.state == State.Inactive
-        self.start_going(**args)
+        self._start_going(**args)
 
     def stop(self):
-        if State not in [State.Searching, State.Pondering]:
-            print("info Ignoring stop command while engine isn't searching.")
+        if self.state is State.Inactive:
+            print(f"info Ignoring stop command while engine isn't searching. ({self.state})")
             return
         # We will get a stop if the user didn't play the pondermove.
         # We give the controller a chance to stop itself.
@@ -283,6 +274,11 @@ class UCI:
         self.state = State.Stopping
 
     def ponderhit(self):
+        # When the opponent premoves, we don't get asked to ponder, but are
+        # started in normal search directly. However LiChess still sends 'ponderhit'.
+        if self.state is not State.Pondering:
+            print(f"info Ignoring ponderhit command while engine isn't pondering. ({self.state})")
+            return
         # We now have to transition from pondering to searching.
         # We do that by stopping the search and starting a new one in normal note.
         # Note: There may be an issue with regards to time controls by doing it this way.
@@ -365,7 +361,8 @@ class UCI:
             use_mcts = True
 
         print(f'info string Searching with {min_kldiv=}, {max_rolls=}, {max_time=}, {temp=}, {use_mcts=}')
-        self.controller = MCTS_Controller(self.controller_args).find_move(
+        self.controller = MCTS_Controller(self.controller_args)
+        self.searcher = self.controller.find_move(
             board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time,
             temperature=temp, pvs=self.options['MultiPV'], use_mcts=use_mcts)
 
@@ -374,10 +371,11 @@ class UCI:
         # Just an easy (hacky?) way to remember args in _finish_searching
         self.search_args = locals()
 
-    def _finish_stopping(self, node, stats, transitioning=False):
+    def _finish_stopping(self, node, stats):
         # go and finish were originally the same method.
         # This is just a hacky way to keep the variable space in sync.
-        locals().update(**self.search_args)
+        use_mcts = self.search_args['use_mcts']
+        is_ponder = self.search_args['ponder']
 
         if use_mcts:
             # Conservative discounting using the harmonic mean
@@ -396,14 +394,14 @@ class UCI:
             print(f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls}'
                   f' kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
 
-        if ponder and not transitioning:
+        if is_ponder and self.state is not State.Transitioning:
             # We have to say something to indicate we stopped, but since we
             # are thinking from the 'wrong' position, it would be confusing to
             # give an actual move.
-            random_move = random.choice(self.board.legal_moves)
+            random_move = random.choice(list(self.board.legal_moves))
             print('bestmove', random_move)
 
-        if not ponder:
+        if not is_ponder:
             # Hack to ensure we can always get the bestmove from python-chess.
             # It only gets it from pv rather than the actual bestmove response.
             print(f'info pv {node.move.uci()}')
@@ -414,7 +412,7 @@ class UCI:
                 parts += ['ponder', ponder_move.uci()]
             print(*parts)
 
-        if transitioning:
+        if self.state is State.Transitioning:
             self._start_going(**self.ponder_search_args)
         else:
             self.state = State.Inactive
@@ -427,10 +425,15 @@ def main():
             # Test if input is available on stdin.
             # Block only if the engine isn't doing anything right now.
             if not is_active or select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-                cmd = sys.stdin.readline()
+                #print('Taking input')
+                cmd = sys.stdin.readline().strip()
+                print('\n>>>', cmd, file=sys.stderr)
+                if cmd == 'quit':
+                    break
                 uci.parse(cmd)
         except KeyboardInterrupt:
             break
+    print('Good bye')
 
 if __name__ == '__main__':
     main()

@@ -1,10 +1,12 @@
+import sys
 import chess
 import chess.engine
 import pathlib
 
 
 def new_engine():
-    python = '/usr/local/bin/python3'
+    #python = '/usr/local/bin/python3'
+    python = sys.executable
     d = pathlib.Path(__file__).parent.parent
     args = [python, '-u', str(d / 'uci.py'), str(d / 'model.bin'), '-occ', '-debug']
     return chess.engine.SimpleEngine.popen_uci(args, debug=True)
