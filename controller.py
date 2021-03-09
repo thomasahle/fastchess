@@ -21,6 +21,7 @@ class MCTS_Controller:
         self.args = args
         self.node = None
         self.should_stop = False
+        self.done = False
 
     def print_stats(self, is_first, pvs):
         if is_first:
@@ -77,6 +78,8 @@ class MCTS_Controller:
     def find_move(self, board, min_kldiv=0, max_rolls=0, max_time=0,
                   pvs=0, temperature=False, use_mcts=True):
         """ Searches until kl_div is below `min_kldiv` or for `movetime' milliseconds, or if 0, for `rolls` rollouts. """
+        assert not self.done, "Controller can only be used once"
+
         # We try to reuse the previous node, but if we can't, we create a new one.
         if self.node:
             # Check if the board is at one of our children (cheap pondering)
@@ -106,7 +109,6 @@ class MCTS_Controller:
             f'{board.san(n.move)} {n.P:.1%}' for n in nodes))
 
         # Find move to play
-        self.should_stop = False
         kl_div = 1
         rolls = 0
         start_time = time.time()
@@ -143,4 +145,5 @@ class MCTS_Controller:
             self.node = max(self.node.children, key=lambda n: n.N)
 
         stats = Stats(kl_div, rolls, time.time() - start_time)
+        self.done = True
         return self.node, stats

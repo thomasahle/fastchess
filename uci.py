@@ -230,14 +230,14 @@ class UCI:
             else:
                 self.fastchess_model = fastchess.Model(self.options['ModelPath'])
 
-        self.controller = MCTS_Controller(args=mcts.Args(
+        self.controller_args = mcts.Args(
             model=self.fastchess_model,
             debug=self.debug,
             cpuct=self.options['MilliCPUCT'] / 1000,
             legal_t=self.options['LegalPolicyTreshold'] / 100,
             cap_t=self.options['CapturePolicyTreshold'] / 100,
             chk_t=self.options['CheckPolicyTreshold'] / 100
-        ))
+        )
 
     def position(self, board, moves):
         self.board = board
@@ -265,10 +265,17 @@ class UCI:
         else:
             board = self.board
 
+        temp = self.options['Temperature'] / 100
+
         min_kldiv = max_time = max_rolls = 0
         
         if infinite:
             max_time = 10**6
+        
+        # Make it a bit more fun to play against online
+        elif board.ply() <= 3:
+            max_time = 1
+            temp = .5
 
         elif movetime:
             max_time = movetime / 1000
@@ -310,12 +317,12 @@ class UCI:
         else:
             use_mcts = True
 
-        temp = self.options['Temperature'] / 100
-
         # The handlers don't work from threads
         # Handle Ctrl+C during (e.g. infinite) search
         #old_handler = signal.signal(signal.SIGINT, lambda s,f: self.stop())
 
+        print(f'info string Searching with {min_kldiv=}, {max_rolls=}, {max_time=}, {temp=}, {use_mcts=}')
+        self.controller = MCTS_Controller(self.controller_args)
         node, stats = self.controller.find_move(
             board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time,
             temperature=temp, pvs=self.options['MultiPV'], use_mcts=use_mcts)
@@ -347,7 +354,9 @@ class UCI:
             if not self._ponderhit:
                 random_move = next(iter(self.board.legal_moves))
                 print('bestmove', random_move)
-            # If pondering we don't output anything.
+            # If pondering we don't output anything since we are actually
+            # transitioning from ponder to normal search, which means UCI
+            # shouldn't notice that this first search has stopped.
         else:
             # Hack to ensure we can always get the bestmove from python-chess.
             # It only gets it from pv rather than the actual bestmove response.
@@ -360,18 +369,29 @@ class UCI:
             print(*parts)
 
     def stop(self):
+        # We will get a stop if the user didn't play the pondermove
         self.controller.stop()
+        # Don't process anythng else till we are safely out of the previous
+        # search.
+        with self.go_lock:
+            pass
 
     def ponderhit(self):
         # FIXME: This is hopelessly un-theadsafe.
         # A ponderhit right after 'go ponder' was called might reset _ponderhit.
         self._ponderhit = True
-        self.controller.stop()
+        #self.controller.stop()
+        self.stop()
+        # FIXME: Just doing a new search during ponder might screw up the rolling
+        # kl_div computations, since they don't know that the node has been pre-
+        # considered and thus assume we magically do much better than we actually do...
         self.go(**self.ponder_search_args)
 
 
 def main():
     uci = UCI()
+    # Why am I even trying to use threads? I hate threads.
+    # What about doinig some sort of heart-beat thing instead?
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         while True:
             cmd = input()
