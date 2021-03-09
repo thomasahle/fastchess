@@ -31,7 +31,7 @@ class Unbuffered(object):
 
 
 sys.stdout = Unbuffered(sys.stdout)
-print('Moving stderr to log', file=sys.stderr)
+#print('Moving stderr to log', file=sys.stderr)
 sys.stderr = open('log', 'a')
 
 

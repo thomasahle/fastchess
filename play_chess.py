@@ -8,7 +8,7 @@ import asyncio
 import pathlib
 import logging
 
-import fastchess
+import pst
 
 
 parser = argparse.ArgumentParser()
@@ -138,7 +138,7 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
 
                     if 'score' in info:
                         score = info['score'].relative
-                        score = fastchess.cp_to_win(score.score()) \
+                        score = pst.to_win(score.score()) \
                             if score.score() is not None else score.mate()
                         key, *val = info.get('string', '').split()
                         if key == 'pv_nodes':
@@ -192,11 +192,13 @@ async def main():
         if not path.is_file():
             print('Unable to locate engines.json file.')
             return
-        conf = json.load(open(str(path)))
+        conf = json.load(path.open())
     else:
         conf = json.load(open(args.conf))
 
     engine = await load_engine(conf, args.name, debug=args.debug)
+    print(f"Playing against {engine.id['name']} by {engine.id['author']}.")
+
     board = chess.Board(args.fen)
 
     if args.no_mcts:
