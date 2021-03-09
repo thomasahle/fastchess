@@ -10,6 +10,8 @@ import os.path
 import signal
 import concurrent.futures
 import threading
+from enum import Enum
+import random
 
 import fastchess
 import mcts
@@ -77,33 +79,43 @@ class CaseInsensitiveDict(dict):
 
 
 # There is also chess.engine.Option
-Type_Spin = namedtuple('spin', ['default', 'min', 'max'])
-Type_String = namedtuple('string', ['default'])
-Type_Check = namedtuple('check', ['default'])
-Type_Button = namedtuple('button', [])
-Type_Combo = namedtuple('combo', ['default', 'vars'])
+class Type(Enum):
+    Spin = namedtuple('spin', ['default', 'min', 'max'])
+    String = namedtuple('string', ['default'])
+    Check = namedtuple('check', ['default'])
+    Button = namedtuple('button', [])
+    Combo = namedtuple('combo', ['default', 'vars'])
+
+
+class State(Enum):
+    Searching = 1
+    Pondering = 2
+    Transitioning = 3
+    Inactive = 4
+    Stopping = 5
 
 
 class UCI:
     def __init__(self):
         self.debug = False
+        self.state = Mode.Inactive
         self.board = chess.Board()
         self.option_types = {
-            'ModelPath': Type_String(default='models/model.bin'),
+            'ModelPath': Type.String(default='models/model.bin'),
             # Play random moves from the posterior distribution to the temp/100 power.
-            'Temperature': Type_Spin(default=0, min=0, max=100),
-            'MultiPV': Type_Spin(default=0, min=0, max=10),
+            'Temperature': Type.Spin(default=0, min=0, max=100),
+            'MultiPV': Type.Spin(default=0, min=0, max=10),
             # Cpuct 4.3 seems good with current treshold values. Previously 2.8 seemed
             # better.
-            'MilliCPUCT': Type_Spin(default=4300, min=0, max=10000),
+            'MilliCPUCT': Type.Spin(default=4300, min=0, max=10000),
 
             # Legal moves will get at least this policy score/100
-            'LegalPolicyTreshold': Type_Spin(default=-3568, min=-10000, max=10000),
-            'CapturePolicyTreshold': Type_Spin(default=-1639, min=-10000, max=10000),
+            'LegalPolicyTreshold': Type.Spin(default=-3568, min=-10000, max=10000),
+            'CapturePolicyTreshold': Type.Spin(default=-1639, min=-10000, max=10000),
             # Adding a bonus to moves that give check is currently not used, since
             # tuning found it irrelevant with current models. It might still be
             # usedful for sovling chess puzzles etc.
-            'CheckPolicyTreshold': Type_Spin(default=-10000, min=-10000, max=10000),
+            'CheckPolicyTreshold': Type.Spin(default=-10000, min=-10000, max=10000),
 
             # TODO: Leela has many interesting options that we may consider, like
             # fpu-value (We use -.99), fpu-at-root (they use 1), policy-softmax-temp
@@ -120,13 +132,8 @@ class UCI:
 
         # Statistics for time management
         self.nps = 0
-        # TODO: The value of roll_kldiv should probably be set statically rather than
-        # dynamically as now, since it tends to fluctuate a lot, causing time management
-        # instabilities.
         self.roll_kldiv = 1
         self.tot_rolls = 0
-        
-        self.go_lock = threading.Lock()
 
     def parse(self, line):
         cmd, arg = line.split(' ', 1) if ' ' in line else (line, '')
@@ -239,39 +246,79 @@ class UCI:
             chk_t=self.options['CheckPolicyTreshold'] / 100
         )
 
+
+    def beat(self):
+        if self.state == State.Searching:
+            self.controller.beat() # Maybe there is some better coroute way to do this.
+        elif self.state = State.Transitioning:
+            res = next(self.controller)
+            if res is not None:
+                node, stats = res
+                self._finish_stopping(node, stats, transitioning=True)
+        elif self.state = State.Stopping:
+            res = next(self.controller)
+            if res is not None:
+                node, stats = res
+                self._finish_stopping(node, stats)
+        return self.state == State.Inactive
+
     def position(self, board, moves):
+        assert self.state == State.Inactive
         self.board = board
         for move in moves:
             self.board.push(move)
 
     def go(self, **args):
         """ See UCI documentation for what the options mean. """
-        with self.go_lock:
-            self._go(**args)
+        assert self.state == State.Inactive
+        self.start_going(**args)
 
-    def _go(self, searchmoves=(), ponder=False, wtime=0, btime=0, winc=0, binc=0,
+    def stop(self):
+        if State not in [State.Searching, State.Pondering]:
+            print("info Ignoring stop command while engine isn't searching.")
+            return
+        # We will get a stop if the user didn't play the pondermove.
+        # We give the controller a chance to stop itself.
+        self.controller.stop()
+        self.state = State.Stopping
+
+    def ponderhit(self):
+        # We now have to transition from pondering to searching.
+        # We do that by stopping the search and starting a new one in normal note.
+        # Note: There may be an issue with regards to time controls by doing it this way.
+        # Just doing a new search during ponder might screw up the rolling
+        # kl_div computations, since they don't know that the node has been pre-
+        # considered and thus assume we magically do much better than we actually do...
+        self.controller.stop()
+        self.state = State.Transitioning
+
+    def _start_going(self, searchmoves=(), ponder=False, wtime=0, btime=0, winc=0, binc=0,
            movestogo=40, depth=0, nodes=0, mate=0, movetime=0, infinite=False):
+
         if searchmoves or mate or depth:
             print('info string Ignoring unsupported go options')
+
         if ponder:
+            # If pondering, the search arguments aren't really for us to use now,
+            # but to use once the pondering is over. We thus store them away safely
+            # for use when transitioning.
             self.ponder_search_args = dict(wtime=wtime, btime=btime, winc=winc, binc=binc,
                 movestogo=movestogo, depth=depth, nodes=nodes, mate=mate, movetime=movetime,
                 infinite=infinite)
-            self._ponderhit = False
             infinite = True
             # Like Leela, we cheat UCI and ponder over all opponent moves
             board = self.board.copy()
-            ponder_move = board.pop()
+            _ponder_move = board.pop()
         else:
             board = self.board
 
         temp = self.options['Temperature'] / 100
 
         min_kldiv = max_time = max_rolls = 0
-        
+
         if infinite:
             max_time = 10**6
-        
+
         # Make it a bit more fun to play against online
         elif board.ply() <= 3:
             max_time = 1
@@ -317,18 +364,20 @@ class UCI:
         else:
             use_mcts = True
 
-        # The handlers don't work from threads
-        # Handle Ctrl+C during (e.g. infinite) search
-        #old_handler = signal.signal(signal.SIGINT, lambda s,f: self.stop())
-
         print(f'info string Searching with {min_kldiv=}, {max_rolls=}, {max_time=}, {temp=}, {use_mcts=}')
-        self.controller = MCTS_Controller(self.controller_args)
-        node, stats = self.controller.find_move(
+        self.controller = MCTS_Controller(self.controller_args).find_move(
             board, min_kldiv=min_kldiv, max_rolls=max_rolls, max_time=max_time,
             temperature=temp, pvs=self.options['MultiPV'], use_mcts=use_mcts)
 
-        # Restore normal handler
-        #signal.signal(signal.SIGINT, old_handler)
+        self.state = State.Pondering if ponder else State.Searching
+
+        # Just an easy (hacky?) way to remember args in _finish_searching
+        self.search_args = locals()
+
+    def _finish_stopping(self, node, stats, transitioning=False):
+        # go and finish were originally the same method.
+        # This is just a hacky way to keep the variable space in sync.
+        locals().update(**self.search_args)
 
         if use_mcts:
             # Conservative discounting using the harmonic mean
@@ -346,18 +395,15 @@ class UCI:
             self.tot_rolls += stats.rolls
             print(f'info string roll_kldiv {self.roll_kldiv:.1f} rolls {stats.rolls}'
                   f' kl_div {stats.kl_div/1:.1} tot {self.tot_rolls}')
-        
-        if ponder:
+
+        if ponder and not transitioning:
             # We have to say something to indicate we stopped, but since we
             # are thinking from the 'wrong' position, it would be confusing to
             # give an actual move.
-            if not self._ponderhit:
-                random_move = next(iter(self.board.legal_moves))
-                print('bestmove', random_move)
-            # If pondering we don't output anything since we are actually
-            # transitioning from ponder to normal search, which means UCI
-            # shouldn't notice that this first search has stopped.
-        else:
+            random_move = random.choice(self.board.legal_moves)
+            print('bestmove', random_move)
+
+        if not ponder:
             # Hack to ensure we can always get the bestmove from python-chess.
             # It only gets it from pv rather than the actual bestmove response.
             print(f'info pv {node.move.uci()}')
@@ -368,37 +414,23 @@ class UCI:
                 parts += ['ponder', ponder_move.uci()]
             print(*parts)
 
-    def stop(self):
-        # We will get a stop if the user didn't play the pondermove
-        self.controller.stop()
-        # Don't process anythng else till we are safely out of the previous
-        # search.
-        with self.go_lock:
-            pass
-
-    def ponderhit(self):
-        # FIXME: This is hopelessly un-theadsafe.
-        # A ponderhit right after 'go ponder' was called might reset _ponderhit.
-        self._ponderhit = True
-        #self.controller.stop()
-        self.stop()
-        # FIXME: Just doing a new search during ponder might screw up the rolling
-        # kl_div computations, since they don't know that the node has been pre-
-        # considered and thus assume we magically do much better than we actually do...
-        self.go(**self.ponder_search_args)
-
+        if transitioning:
+            self._start_going(**self.ponder_search_args)
+        else:
+            self.state = State.Inactive
 
 def main():
     uci = UCI()
-    # Why am I even trying to use threads? I hate threads.
-    # What about doinig some sort of heart-beat thing instead?
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        while True:
-            cmd = input()
-            print('stderr', cmd, file=sys.stderr)
-            if cmd == 'quit':
-                return
-            executor.submit(uci.parse, cmd)
+    while True:
+        try:
+            is_active = uci.beat()
+            # Test if input is available on stdin.
+            # Block only if the engine isn't doing anything right now.
+            if not is_active or select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+                cmd = sys.stdin.readline()
+                uci.parse(cmd)
+        except KeyboardInterrupt:
+            break
 
 if __name__ == '__main__':
     main()

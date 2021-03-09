@@ -117,8 +117,7 @@ class MCTS_Controller:
             for i in itertools.count():
                 rolls += 1
                 self.node.rollout()
-                if self.should_stop or \
-                        max_time > 0 and time.time() > start_time + max_time or \
+                if max_time > 0 and time.time() > start_time + max_time or \
                         max_rolls > 0 and rolls >= max_rolls:
                     break
                 if (i+1) % STAT_INTERVAL == 0:
@@ -126,6 +125,11 @@ class MCTS_Controller:
                     if min_kldiv > 0 and kl_div < min_kldiv:
                         break
                     first = False
+                    # Give the interface a chance to stop us.
+                    yield
+                    # Check if they did.
+                    if self.should_stop:
+                        break
 
         # Pick best or random child
         if temperature:
@@ -146,4 +150,4 @@ class MCTS_Controller:
 
         stats = Stats(kl_div, rolls, time.time() - start_time)
         self.done = True
-        return self.node, stats
+        yield self.node, stats
